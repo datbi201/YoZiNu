@@ -13,6 +13,7 @@ use tokio::runtime::Runtime;
 
 use crate::art::Art;
 use crate::audio::{AudioCmd, AudioHandle};
+use crate::catalog::{Catalog, SongShelf};
 use crate::lyrics::{self, LyricsSet};
 use crate::model::{self, Card, Target, Thumb, Track, sized};
 use crate::stream::{self, Shared};
@@ -27,6 +28,12 @@ pub enum Req {
     /// A Moods & genres category, by its browse params.
     Mood(String),
     Search(String),
+    MixedSearch(String),
+    ImportMixed { ids: Vec<String>, skipped: usize },
+    CatalogHome(Catalog),
+    CatalogSearch { source: Catalog, query: String },
+    /// Songs similar to a catalog track. `seed` is the fully qualified track id.
+    CatalogAutoplay { seed: String },
     /// A search of only your library or only your uploads.
     SearchIn { query: String, scope: ytm::Scope },
     /// Suggestions for a query; `round` comes back with them, so stale ones can be dropped.
@@ -136,7 +143,13 @@ impl Req {
             Req::MoreQuickPicks(_) => "Loading more picks",
             Req::Explore(_) => "Loading explore",
             Req::Mood(_) => "Loading the category",
-            Req::Search(_) | Req::SearchIn { .. } => "Search",
+            Req::ImportMixed { .. } => "Import playlist",
+            Req::Search(_) | Req::SearchIn { .. } | Req::MixedSearch(_) => "Search",
+            Req::CatalogHome(Catalog::Zing) => "Zing home",
+            Req::CatalogHome(Catalog::Nct) => "NhacCuaTui home",
+            Req::CatalogSearch { source: Catalog::Zing, .. } => "Zing search",
+            Req::CatalogSearch { source: Catalog::Nct, .. } => "NhacCuaTui search",
+            Req::CatalogAutoplay { .. } => "Catalog autoplay",
             Req::Suggest { .. } => "Suggest",
             Req::ForgetSearch(_) => "Removing the search",
             Req::Album { .. } => "Loading album",
@@ -186,7 +199,7 @@ impl Req {
 
     /// Background requests fail quietly (logged, no toast).
     fn quiet(&self) -> bool {
-        matches!(self, Req::Suggest { .. } | Req::Account | Req::Channels | Req::ServerQueue | Req::SongRating { .. } | Req::Art { .. } | Req::Prefetch { .. } | Req::HomeMore(_) | Req::Lyrics(_) | Req::Segments { .. } | Req::ArtistPicture { .. } | Req::MusicVideo(_) | Req::LyricsExtras { .. } | Req::Comments { .. } | Req::CommentsPage { .. } | Req::CommentAction { .. })
+        matches!(self, Req::Suggest { .. } | Req::Account | Req::Channels | Req::ServerQueue | Req::SongRating { .. } | Req::Art { .. } | Req::Prefetch { .. } | Req::HomeMore(_) | Req::Lyrics(_) | Req::Segments { .. } | Req::ArtistPicture { .. } | Req::MusicVideo(_) | Req::LyricsExtras { .. } | Req::Comments { .. } | Req::CommentsPage { .. } | Req::CommentAction { .. } | Req::CatalogAutoplay { .. })
     }
 }
 
@@ -354,6 +367,8 @@ pub enum Resp {
     Explore(Explore),
     Mood(ytm::MoodPage),
     Search(SearchResults),
+    MixedSearch { query: String, groups: [Option<Vec<Track>>; 3] },
+    ImportedMixed { tracks: Vec<Track>, skipped: usize },
     /// A search of your library or your uploads (`SearchResults::scope`).
     SearchIn(SearchResults),
     /// `None`: this video can't be shown; the picture stays.
@@ -394,6 +409,9 @@ pub enum Resp {
     LyricsExtras { video_id: String, source: String, target: String, extras: crate::translate::Extras },
     Art { key: String, art: Art },
     Radio { seed: String, tracks: Vec<Track> },
+    CatalogHome { source: Catalog, shelves: Option<Vec<SongShelf>> },
+    CatalogSearch { source: Catalog, query: String, tracks: Vec<Track>, failed: bool },
+    CatalogAutoplay { seed: String, tracks: Vec<Track> },
     /// A comments response (`Req::Comments`, `CommentsPage` or `CommentAction`) by its tag;
     /// `None`: it failed.
     CommentsPage { token: String, page: Option<serde_json::Value> },
@@ -465,6 +483,20 @@ impl Resp {
     /// so the page stops waiting for it.
     fn ended(id: String, load: u64) -> Self {
         Resp::CollectionMore { id, load, tracks: Vec::new(), set_ids: Vec::new(), more: false, failed: true }
+    }
+}
+
+fn catalog_result<T>(what: &str, result: Result<anyhow::Result<T>, tokio::time::error::Elapsed>) -> Option<T> {
+    match result {
+        Ok(Ok(value)) => Some(value),
+        Ok(Err(e)) => {
+            log::warn!("{what}: {e}");
+            None
+        }
+        Err(_) => {
+            log::warn!("{what}: request timed out");
+            None
+        }
     }
 }
 
@@ -867,6 +899,11 @@ pub struct Backend {
     songs: Arc<std::sync::Mutex<std::collections::HashMap<String, SongCell>>>,
     /// Albums and playlists being downloaded.
     batch: Arc<std::sync::Mutex<DownloadQueue>>,
+    /// The Zing MP3 client (v0.1 module).
+    zing: crate::zing::Client,
+    nct: crate::nct::Client,
+    /// Zing stream URLs resolved ahead of time, by full `zing:` track id.
+    zing_urls: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
 impl Backend {
@@ -894,7 +931,8 @@ impl Backend {
         {
             log::warn!("proxy relay: {e:#}");
         }
-        let backend = Self { rt: Arc::new(rt), api, tx, audio, wake, prefetched: Default::default(), current: Default::default(), data_dir, lyrics, translate, jsc, premium: Arc::new(tokio::sync::Mutex::new(Err(None))), hq: Default::default(), clean: Default::default(), visionos_hls: Default::default(), songs: Default::default(), batch: Default::default() };
+        let http = crate::proxy::http();
+        let backend = Self { rt: Arc::new(rt), api, tx, audio, wake, prefetched: Default::default(), current: Default::default(), data_dir, lyrics, translate, jsc, premium: Arc::new(tokio::sync::Mutex::new(Err(None))), hq: Default::default(), clean: Default::default(), visionos_hls: Default::default(), songs: Default::default(), batch: Default::default(), zing: crate::zing::Client::new(http.clone()), nct: crate::nct::Client::new(http), zing_urls: Default::default() };
         backend.keep_signed_in();
         Ok(backend)
     }
@@ -1088,6 +1126,57 @@ impl Backend {
                 Req::Explore(preferred_artists) => self.explore(&preferred_artists, me).await?,
                 Req::Mood(params) => Resp::Mood(ytm::mood(api, &params, me).await?),
                 Req::Search(query) => self.search(query, me).await?,
+                Req::ImportMixed { ids, mut skipped } => {
+                    use futures_util::StreamExt;
+                    let replies = futures_util::stream::iter(ids).map(|id| {
+                        let this = self.clone();
+                        async move {
+                            tokio::time::timeout(std::time::Duration::from_secs(8), this.import_track(&id)).await
+                        }
+                    }).buffered(8).collect::<Vec<_>>().await;
+                    let tracks = replies.into_iter().filter_map(|reply| match reply {
+                        Ok(Ok(track)) => Some(track),
+                        _ => { skipped += 1; None }
+                    }).collect();
+                    Resp::ImportedMixed { tracks, skipped }
+                }
+                Req::MixedSearch(query) => {
+                    let limit = std::time::Duration::from_secs(12);
+                    let (yt, zing, nct) = tokio::join!(
+                        tokio::time::timeout(limit, ytm::search_songs(api, &query, me)),
+                        tokio::time::timeout(limit, self.zing.search(&query)),
+                        tokio::time::timeout(limit, self.nct.search(&query)),
+                    );
+                    let groups = [("YouTube Music", yt), ("Zing MP3", zing), ("NhacCuaTui", nct)]
+                        .map(|(source, result)| catalog_result(source, result).map(|mut tracks| {
+                            tracks.truncate(12);
+                            tracks
+                        }));
+                    Resp::MixedSearch { query, groups }
+                }
+                Req::CatalogHome(source) => {
+                    let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                        match source {
+                            Catalog::Zing => self.zing.home().await,
+                            Catalog::Nct => self.nct.home().await,
+                        }
+                    }).await;
+                    Resp::CatalogHome { source, shelves: catalog_result(what, result) }
+                }
+                Req::CatalogSearch { source, query } => {
+                    let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                        match source {
+                            Catalog::Zing => self.zing.search(&query).await,
+                            Catalog::Nct => self.nct.search(&query).await,
+                        }
+                    }).await;
+                    let tracks = catalog_result(what, result);
+                    Resp::CatalogSearch { source, query, failed: tracks.is_none(), tracks: tracks.unwrap_or_default() }
+                }
+                Req::CatalogAutoplay { seed } => {
+                    let tracks = self.catalog_autoplay(&seed).await;
+                    Resp::CatalogAutoplay { seed, tracks }
+                }
                 Req::SearchIn { query, scope } => Resp::SearchIn(search_in(ytm::search_in(api, &query, scope).await?, query, scope)),
                 Req::Suggest { query, round } => {
                     let terms = ytm::suggestions(api, &query, me).await?.into_iter().take(8).collect();
@@ -1124,6 +1213,7 @@ impl Backend {
                     Some(q) => Resp::ServerQueue(q),
                     None => return Ok(None),
                 },
+                Req::SongRating { video_id, round } if Catalog::owns_track(&video_id) => Resp::SongRating { video_id, round, rating: None },
                 Req::SongRating { video_id, round } => {
                     let rating = match tokio::time::timeout(std::time::Duration::from_secs(10), ytm::song_rating(api, &video_id)).await {
                         Ok(Ok(rating)) => rating,
@@ -1140,6 +1230,10 @@ impl Backend {
                     let video_id = track.id.clone();
                     Resp::Lyrics { lyrics: self.lyrics_for(&track).await, video_id }
                 }
+                Req::Comments { video_id } if Catalog::owns_track(&video_id) => Resp::CommentsPage {
+                    token: format!("video:{video_id}"),
+                    page: Some(serde_json::json!({ "commentsOff": true })),
+                },
                 Req::Comments { video_id } => {
                     let page = ytm::comments(api, &video_id, me).await.map(|p| p.unwrap_or_else(|| serde_json::json!({ "commentsOff": true })));
                     if let Err(e) = &page {
@@ -1162,6 +1256,7 @@ impl Backend {
                     }
                     Resp::CommentsPage { token, page: page.ok() }
                 }
+                Req::Segments { video_id } if Catalog::owns_track(&video_id) => Resp::Segments { video_id, segments: Vec::new() },
                 Req::Segments { video_id } => {
                     let segments = crate::sponsorblock::segments(&self.http(), &video_id).await?;
                     Resp::Segments { video_id, segments }
@@ -1181,6 +1276,10 @@ impl Backend {
                     let bytes = self.http().get(&url).send().await?.error_for_status()?.bytes().await?;
                     let art = tokio::task::spawn_blocking(move || crate::art::process(&bytes)).await??;
                     Resp::Art { key, art }
+                }
+                Req::Radio { seed, .. } if Catalog::owns_track(&seed) => {
+                    let tracks = self.catalog_autoplay(&seed).await;
+                    Resp::Radio { seed, tracks }
                 }
                 Req::Radio { seed, song_of } => {
                     // A music video's radio is music videos; its song's is songs, as from the
@@ -1215,6 +1314,8 @@ impl Backend {
                     };
                     Resp::PlayQueue { target, title, tracks }
                 }
+                Req::Download { track: t, .. } if Catalog::owns_track(&t.id) => Resp::Error("Tải xuống chỉ hỗ trợ bài YouTube Music".into()),
+                Req::DownloadMany { target, tracks, .. } if target.as_ref().is_some_and(|t| matches!(t, Target::Song(tr) if Catalog::owns_track(&tr.id))) || tracks.as_ref().is_some_and(|ts| ts.iter().any(|t| Catalog::owns_track(&t.id))) => Resp::Error("Tải xuống chỉ hỗ trợ bài YouTube Music".into()),
                 Req::Download { track: t, for_video } => {
                     let (path, _) = self.download(&t, for_video, false).await?;
                     // Its lyrics too, for offline; the download is done without waiting for them.
@@ -1236,6 +1337,7 @@ impl Backend {
                         Resp::PlayError { generation, msg: format!("{e:#}") }
                     }
                 },
+                Req::VideoStream { video_id, max_height } if Catalog::owns_track(&video_id) => Resp::VideoStream { video_id, max_height, stream: None },
                 Req::VideoStream { video_id, max_height } => {
                     let found = async { innertube::video_stream(&self.http(), &video_id, &api.visitor_data(false).await?, max_height.into()).await }.await;
                     if let Err(e) = &found {
@@ -1243,12 +1345,21 @@ impl Backend {
                     }
                     Resp::VideoStream { video_id, max_height, stream: found.ok() }
                 }
+                Req::MusicVideo(song) if Catalog::owns_track(&song.id) => Resp::MusicVideo { video: None, song: song.id },
                 Req::MusicVideo(song) => Resp::MusicVideo { video: self.music_video(&song).await?, song: song.id },
+                Req::Canvas(track) if Catalog::owns_track(&track.id) => Resp::Canvas { clip: None, video_id: track.id },
                 Req::Canvas(track) => Resp::Canvas { clip: crate::canvas::find(&self.http(), &self.data_dir, &track).await, video_id: track.id },
+                Req::Prefetch { video_id, .. } if Catalog::owns_track(&video_id) => {
+                    if let Some((Catalog::Zing, bare)) = Catalog::split_track(&video_id) {
+                        self.zing_prefetch(&video_id, bare).await;
+                    }
+                    return Ok(None);
+                }
                 Req::Prefetch { video_id, song_of } => {
                     self.prefetch(video_id, song_of).await?;
                     return Ok(None);
                 }
+                Req::Like { video_id, like } if Catalog::owns_track(&video_id) => Resp::LikedMany { video_ids: Vec::new(), failed: vec![video_id], like, others: Vec::new() },
                 Req::Like { video_id, like } => {
                     let epoch = api.epoch();
                     match ytm::set_like(api, &video_id, like).await {
@@ -1263,6 +1374,7 @@ impl Backend {
                         }
                     }
                 }
+                Req::UnlikeBoth { song, video } if Catalog::owns_track(&song) || Catalog::owns_track(&video) => Resp::LikedMany { video_ids: Vec::new(), failed: vec![song, video], like: false, others: Vec::new() },
                 Req::UnlikeBoth { song, video } => {
                     let epoch = api.epoch();
                     let song_went = ytm::set_like(api, &song, false).await;
@@ -1285,6 +1397,7 @@ impl Backend {
                     }
                 }
                 Req::LikeMany { video_ids, like, stand_ins } => self.like_many(video_ids, like, stand_ins).await?,
+                Req::Dislike { video_id, skip_generation } if Catalog::owns_track(&video_id) => Resp::Disliked { video_id, skip_generation, ok: false },
                 Req::Dislike { video_id, skip_generation } => {
                     let result = ytm::dislike(api, &video_id).await;
                     if let Err(e) = &result {
@@ -1292,6 +1405,7 @@ impl Backend {
                     }
                     Resp::Disliked { video_id, skip_generation, ok: result.is_ok() }
                 }
+                Req::RemoveRating { video_id, was_disliked } if Catalog::owns_track(&video_id) => Resp::RatingRemoved { video_id, was_disliked, ok: false },
                 Req::RemoveRating { video_id, was_disliked } => {
                     let result = ytm::set_like(api, &video_id, false).await;
                     if let Err(e) = &result {
@@ -1299,6 +1413,7 @@ impl Backend {
                     }
                     Resp::RatingRemoved { video_id, was_disliked, ok: result.is_ok() }
                 }
+                Req::CreatePlaylist { video_ids, .. } if video_ids.iter().any(|id| Catalog::owns_track(id)) => Resp::Error("Playlist YouTube Music chỉ nhận bài từ YouTube Music".into()),
                 Req::CreatePlaylist { title, video_ids } => {
                     let id = match video_ids.as_slice() {
                         [] => ytm::create_playlist(api, &title, None).await?,
@@ -1318,6 +1433,9 @@ impl Backend {
                         log::warn!("sort playlist failed: {e:#}");
                         Resp::PlaylistChanged { id, message: "Couldn't sort the playlist" }
                     }
+                },
+                Req::AddToPlaylist { playlist_id, video_ids } if video_ids.iter().any(|id| Catalog::owns_track(id)) => Resp::AddedToPlaylist {
+                    id: playlist_id, video_ids, error: Some("Playlist YouTube Music chỉ nhận bài từ YouTube Music".into()),
                 },
                 Req::AddToPlaylist { playlist_id, video_ids } => {
                     // A failure says which songs too, so they stop showing in the playlist.
@@ -1559,6 +1677,14 @@ impl Backend {
     /// A song's lyrics. A downloaded song's are kept: shown at once from what was saved
     /// (offline too), and saved again from a fresh look in the background.
     async fn lyrics_for(&self, t: &Track) -> LyricsSet {
+        if let Some((source, id)) = Catalog::split_track(&t.id) {
+            if source == Catalog::Zing
+                && let Ok(Ok(Some(lyrics))) = tokio::time::timeout(std::time::Duration::from_secs(5), self.zing.lyrics(id)).await
+            {
+                return LyricsSet { sources: vec![lyrics] };
+            }
+            return self.lyrics.fetch_catalog(t).await.unwrap_or_default();
+        }
         if crate::downloads::path(&t.id).is_none() {
             return self.fetch_lyrics(t).await;
         }
@@ -1646,7 +1772,124 @@ impl Backend {
         Ok(())
     }
 
+    async fn import_track(&self, id: &str) -> anyhow::Result<Track> {
+        match Catalog::split_track(id) {
+            Some((Catalog::Zing, key)) => self.zing.song(key).await,
+            Some((Catalog::Nct, key)) => self.nct.song(key).await,
+            None => {
+                let link = format!("https://www.youtube.com/watch?v={id}");
+                let reply: serde_json::Value = self.http().get("https://www.youtube.com/oembed")
+                    .query(&[("url", link.as_str()), ("format", "json")])
+                    .send().await?.error_for_status()?.json().await?;
+                let title = reply["title"].as_str().ok_or_else(|| anyhow::anyhow!("No YouTube title"))?;
+                let artists = reply["author_name"].as_str().map(|name| vec![crate::model::Link { name: name.to_owned(), id: None }]).unwrap_or_default();
+                let thumbs = reply["thumbnail_url"].as_str().map(|url| vec![crate::model::Thumb {
+                    url: url.to_owned(),
+                    width: reply["thumbnail_width"].as_u64().unwrap_or(480) as u32,
+                    height: reply["thumbnail_height"].as_u64().unwrap_or(360) as u32,
+                }]).unwrap_or_default();
+                Ok(Track { id: id.to_owned(), title: title.to_owned(), artists, thumbs, ..Track::default() })
+            }
+        }
+    }
+
+    async fn catalog_autoplay(&self, seed: &str) -> Vec<Track> {
+        let Some((source, key)) = Catalog::split_track(seed) else { return Vec::new() };
+        let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            match source {
+                Catalog::Zing => Ok(self.zing.autoplay(key).await),
+                Catalog::Nct => self.nct.similar(key).await,
+            }
+        }).await;
+        catalog_result(source.name(), result).unwrap_or_default()
+    }
+
+    /// Resolve a Zing track's stream URL ahead of its play, into `zing_urls`.
+    async fn zing_prefetch(&self, id: &str, bare: &str) {
+        if self.zing_urls.lock().await.contains_key(id) {
+            return;
+        }
+        match self.zing.streaming(bare).await {
+            Ok(url) => {
+                self.zing_urls.lock().await.insert(id.to_owned(), url);
+            }
+            Err(e) => log::debug!("zing prefetch {id}: {e:#}"),
+        }
+    }
+
+    async fn zing_url(&self, id: &str, bare: &str) -> anyhow::Result<String> {
+        // Drop the cache lock after reading. A cache miss needs to acquire it
+        // again to store the resolved URL.
+        let cached_url = self.zing_urls.lock().await.get(id).cloned();
+        let url = match cached_url {
+            Some(u) => u,
+            None => {
+                let u = self.zing.streaming(bare).await?;
+                self.zing_urls.lock().await.insert(id.to_owned(), u.clone());
+                u
+            }
+        };
+        Ok(url)
+    }
+
+    /// Both catalogs decode an MP3 from a complete buffer through the same player.
+    async fn start_catalog_audio(&self, source: Catalog, id: &str, url: &str, duration: Option<u32>, generation: u64, at: std::time::Duration) -> anyhow::Result<()> {
+        if self.audio.status.wanted_gen.load(Ordering::Relaxed) != generation {
+            return Ok(());
+        }
+        let http = self.http();
+        let (agent, referer) = source.media_headers();
+        let duration_ms = duration.map_or(0, |d| u64::from(d) * 1000);
+        let bytes = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let resp = http.get(url).header("User-Agent", agent).header("Referer", referer)
+                .send().await.and_then(reqwest::Response::error_for_status).map_err(reqwest::Error::without_url)?;
+            resp.bytes().await.map_err(reqwest::Error::without_url)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Quá thời gian tải nhạc từ {}", source.name()))??;
+        let shared = stream::Shared::from_bytes(bytes.to_vec(), duration_ms, None);
+        {
+            let mut current = self.current.lock().unwrap();
+            if self.audio.status.wanted_gen.load(Ordering::Relaxed) != generation {
+                return Ok(());
+            }
+            *current = Some((id.to_owned(), shared.clone()));
+        }
+        let audio = self.audio.clone();
+        let tx = self.tx.clone();
+        let wake = self.wake.clone();
+        let seek = !at.is_zero();
+        let shared2 = shared.clone();
+        tokio::task::spawn_blocking(move || {
+            let open = || -> anyhow::Result<crate::audio::TrackDecoder> {
+                let mut d = stream::decoder(shared.clone(), seek)?;
+                if seek {
+                    rodio::Source::try_seek(&mut d, at).map_err(|e| anyhow::anyhow!("seek: {e}"))?;
+                }
+                Ok(d)
+            };
+            match open() {
+                Ok(decoder) => audio.send(AudioCmd::Start { generation, decoder, shared: shared2, at }),
+                Err(e) => {
+                    let _ = tx.send(Resp::PlayError { generation, msg: format!("decode: {e}") });
+                    wake();
+                }
+            }
+        });
+        Ok(())
+    }
+
     async fn start_playback(&self, listed: &str, song_of: Option<&Track>, carried: Option<Track>, generation: u64, at: std::time::Duration, report: bool) -> anyhow::Result<()> {
+        if let Some((source, key)) = Catalog::split_track(listed) {
+            let url = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                match source {
+                    Catalog::Zing => self.zing_url(listed, key).await,
+                    Catalog::Nct => self.nct.streaming(key).await,
+                }
+            }).await.map_err(|_| anyhow::anyhow!("Quá thời gian lấy link nhạc từ {}", source.name()))??;
+            let duration = carried.as_ref().filter(|t| t.id == listed).and_then(|t| t.duration).or_else(|| song_of.filter(|t| t.id == listed).and_then(|t| t.duration));
+            return self.start_catalog_audio(source, listed, &url, duration, generation, at).await;
+        }
         let t0 = std::time::Instant::now();
         // A music video plays as its song when one is found in time (or goes on as the
         // one it was). From here on, everything (prefetch, replay, history) goes by what
@@ -2423,12 +2666,17 @@ impl Backend {
     /// what didn't take. Unlikes still listed after that count as refused; likes aren't
     /// counted so (songs that can't be played are liked but not listed).
     async fn like_many(&self, ids: Vec<String>, like: bool, stand_ins: std::collections::HashMap<String, String>) -> anyhow::Result<Resp> {
+        let (refused, ids): (Vec<_>, Vec<_>) = ids.into_iter().partition(|id| Catalog::owns_track(id));
+        if ids.is_empty() {
+            return Ok(Resp::LikedMany { video_ids: Vec::new(), failed: refused, like, others: Vec::new() });
+        }
         let total = ids.len();
-        let (done, failed, others) = like_many(&self.api, ids, like, &stand_ins, |taken, n| {
+        let (done, mut failed, others) = like_many(&self.api, ids, like, &stand_ins, |taken, n| {
             let _ = self.tx.send(Resp::LikeProgress { taken: taken.into_iter().map(str::to_owned).collect(), done: n, total, like });
             self.wake();
         })
         .await;
+        failed.extend(refused);
         // Even when all were refused: the app stops waiting on them and shows them as they are.
         Ok(Resp::LikedMany { video_ids: done, failed, like, others })
     }

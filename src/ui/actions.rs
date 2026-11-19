@@ -12,6 +12,17 @@ use super::undo::Undo;
 use super::{Action, App, Dialog, LibTab, NpTab, Page, Unlike, jam, palette, transfer};
 
 impl App {
+    pub(super) fn submit_global_search(&mut self, query: String) {
+        if self.search_provider == Some(super::mixed_playlist::Source::YouTube) {
+            self.search_scope = (query.clone(), crate::ytm::Scope::Everywhere);
+        }
+        let page = match self.search_provider {
+            Some(source) => source.search(query),
+            None => Page::MixedSearch(query),
+        };
+        self.actions.push(Action::Go(page));
+    }
+
     pub(super) fn heard_like_action(&self, like: bool) -> Option<Action> {
         Some(Action::LikeHeard { like, video_id: self.playing_id()?.to_owned(), generation: self.generation })
     }
@@ -97,6 +108,12 @@ impl App {
                 let fill = self.page_fill(&tracks);
                 self.play_shuffled(tracks, fill);
             }
+            Action::PlayMixed(tracks, start) => {
+                self.queue_source = None;
+                self.play_mixed(tracks, start);
+            }
+            Action::AddToMixed(track) => self.add_to_mixed_and_queue(track),
+            Action::EditMixed(edit) => self.edit_mixed(edit),
             Action::TogglePlay => self.toggle(),
             Action::TransferPick(t) => transfer::use_pick(self, t),
             // Kept already: at once. A playlist that isn't starts with its first page.
@@ -110,6 +127,7 @@ impl App {
                 }
             }
             Action::Open(Target::Song(t)) | Action::Radio(t) if self.explicit_hidden(&t) => {}
+            Action::Open(Target::Song(t)) if crate::catalog::Catalog::owns_track(&t.id) => self.play_catalog(t),
             // Radio from the song playing: it goes on playing, and the radio replaces what
             // was to come, as YouTube Music's Start radio does. Clicking its card (which
             // starts a song's radio) does the same rather than starting it over.

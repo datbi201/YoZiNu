@@ -197,6 +197,8 @@ impl App {
                     c.url = clip;
                 }
             }
+            Resp::ImportedMixed { tracks, skipped } => self.finish_mixed_import(tracks, skipped),
+            Resp::MixedSearch { query, groups } => self.accept_mixed_search(&query, groups),
             Resp::Search(r) => {
                 if self.smoke.as_ref() == Some(&r.query) {
                     self.smoke = None;
@@ -364,8 +366,43 @@ impl App {
                     self.show_cover_colours(now);
                 }
             }
+            Resp::CatalogHome { source, shelves } => {
+                let state = self.catalog_state_mut(source);
+                state.home_loading = false;
+                state.home_failed = shelves.is_none();
+                if let Some(shelves) = shelves {
+                    state.home = Some(shelves);
+                }
+            }
+            Resp::CatalogSearch { source, query, tracks, failed } => {
+                let state = self.catalog_state_mut(source);
+                if state.searched == query {
+                    state.loading = false;
+                    state.results = tracks;
+                    state.search_failed = failed;
+                }
+            }
+            Resp::CatalogAutoplay { seed, tracks } => {
+                if self.catalog_recommending.as_deref() == Some(seed.as_str()) {
+                    self.catalog_recommending = None;
+                }
+                if self.queue.mixed { return; }
+                // For a queue since replaced: the seed isn't in it any more.
+                if !self.queue.tracks.iter().any(|t| t.id == seed) {
+                    return;
+                }
+                let had = self.queue.tracks.len();
+                self.queue.add_radio(&seed, tracks);
+                let grew = self.queue.tracks.len() > had;
+                if std::mem::take(&mut self.ended) && grew {
+                    self.next();
+                } else if !self.buffering {
+                    self.prefetch_next();
+                }
+            }
             Resp::Radio { seed, tracks } => {
                 self.radio_pending = false;
+                if self.queue.mixed { return; }
                 // For a queue since replaced: the one playing now gets its own.
                 if !self.queue.tracks.iter().any(|t| t.id == seed) {
                     self.top_up();
@@ -783,7 +820,7 @@ impl App {
             let has_next = !self.queue.at_end() && self.queue.index.is_some();
             // Skipping can't help when the account is the problem: the rest of
             // an album like this needs it too. Stop on the song instead.
-            if let Some(why) = account_block(&reason, self.logged_in) {
+            if !self.queue.mixed && let Some(why) = account_block(&reason, self.logged_in) {
                 self.skip_streak = 0;
                 self.toast(why.replace("{title}", &title));
             } else if has_next && !self.jam.guest() && self.skip_streak < MAX_SKIPS {

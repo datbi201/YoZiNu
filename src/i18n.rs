@@ -29,7 +29,7 @@ fluent_templates::static_loader! {
 
 /// The languages Settings offers: a language is added once it's mostly translated (what
 /// it hasn't got yet shows in English).
-pub const LANGUAGES: &[&str] = &["en-US"];
+pub const LANGUAGES: &[&str] = &["en-US", "vi-VN"];
 
 /// Dev hook: YTM_PSEUDO_LOCALE=1 shows every message accented, bracketed and a good deal
 /// longer, the way a translation can be. Text still plain is text not yet translatable;
@@ -65,6 +65,10 @@ fn active() -> &'static Active {
 }
 
 /// The language this run shows (one of [`LANGUAGES`]).
+pub fn label(english: &'static str, vietnamese: &'static str) -> &'static str {
+    if active().lang.language.as_str() == "vi" { vietnamese } else { english }
+}
+
 pub fn current() -> String {
     active().lang.to_string()
 }

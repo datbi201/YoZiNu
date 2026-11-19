@@ -1,3 +1,20 @@
+# YoZiNu · Rev0.4
+
+YoZiNu là ứng dụng nghe nhạc trên Windows, phát triển từ [ytm-rs](https://github.com/grapedjuice/ytm-rs) theo giấy phép GPL-3.0. Ứng dụng tích hợp YouTube Music, Zing MP3 và NhacCuaTui.
+
+- Tìm từ thanh trên cùng, chọn một nguồn hoặc tìm cả ba. Dùng **Playlist tổng hợp** để lưu và xếp thứ tự bài từ nhiều nguồn.
+- **Xuất liên kết** tạo tệp văn bản UTF-8, mỗi dòng một liên kết trang bài hát. **Nhập liên kết** đọc TXT/M3U, nối các bài hợp lệ vào playlist đang lưu và giữ thứ tự.
+- Chọn **Settings → General → Language → Tiếng Việt**, rồi mở lại ứng dụng.
+- NhacCuaTui và Zing MP3 dùng chế độ khách trong YoZiNu. Mục Tài khoản có liên kết đến trang chính thức của từng dịch vụ.
+
+### Biên dịch YoZiNu
+
+Chạy `cargo build --release --locked` bằng Rust trên Windows. Để bật adapter Zing MP3, bản build cần cấu hình được cấp cho tích hợp qua hai biến môi trường `YOZINU_ZING_API_KEY` và `YOZINU_ZING_SECRET_KEY`. Đặt giá trị ở môi trường máy build. YoZiNu báo lỗi cấu hình Zing nếu thiếu, các nguồn còn lại vẫn hoạt động.
+
+Xem [lịch sử phiên bản YoZiNu](LICHSU-REV.md). Tài liệu và các liên kết phát hành bên dưới thuộc dự án gốc ytm-rs.
+
+---
+
 <div align="center">
   <img src="assets/icon/icon.png" alt="ytm-rs app icon" width="96">
   <h1>ytm-rs</h1>

@@ -206,7 +206,7 @@ pub fn overlay_light(painter: &egui::Painter, area: Rect, o: &crate::preset::Ove
 /// The ☰ button at the top of the sidebar: collapses it to an icon rail and back.
 fn menu_button(app: &mut App, ui: &mut Ui) {
     let (r, resp) = ui.allocate_exact_size(vec2(40.0, 32.0), Sense::click());
-    let label = if is_rail(app) { "Expand sidebar" } else { "Collapse sidebar" };
+    let label = if is_rail(app) { crate::i18n::label("Expand sidebar", "Mở rộng thanh bên") } else { crate::i18n::label("Collapse sidebar", "Thu gọn thanh bên") };
     let resp = named(resp, label).on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand);
     let h = theme::anim_bool(ui.ctx(), resp.id.with("h"), resp.hovered(), 0.15);
     ui.painter().circle_filled(r.center(), 18.0, theme::glass(0.08 * h));
@@ -366,7 +366,7 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
         ui.painter().circle_filled(r.center(), 16.0, theme::RED);
         ui.painter().circle_stroke(r.center(), 9.5, egui::Stroke::new(1.6, Color32::WHITE));
         widgets::play_triangle(ui, r.center() + vec2(0.8, 0.0), 4.6, Color32::WHITE);
-        let resp = named(resp, "Home");
+        let resp = named(resp, crate::i18n::label("Home", "Trang chủ"));
         let resp = if collapsed { resp } else { resp.on_hover_cursor(egui::CursorIcon::PointingHand) };
         if resp.clicked() && !collapsed {
             app.actions.push(Action::Go(Page::Home));
@@ -430,15 +430,13 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
             *go_to = Some(page);
         }
     };
-    nav(ui, icon::HOUSE, "Home", Page::Home, p == Page::Home, &mut go_to);
-    nav(ui, icon::COMPASS, "Explore", Page::Explore, matches!(p, Page::Explore | Page::Mood(_)), &mut go_to);
-    nav(ui, icon::LIBRARY, "Library", Page::Library(LibTab::Playlists), matches!(p, Page::Library(_)), &mut go_to);
-    let jam_label = match app.jam.member_count() {
-        n if app.jam.active() && n > 0 => format!("Jam · {n} listening"),
-        _ => "Listen together".to_owned(),
-    };
-    nav(ui, icon::USERS, &jam_label, Page::Jam, p == Page::Jam, &mut go_to);
-
+    nav(ui, icon::HOUSE, crate::i18n::label("YouTube Home", "Trang chủ YouTube"), Page::Home, p == Page::Home, &mut go_to);
+    nav(ui, icon::COMPASS, crate::i18n::label("YouTube Explore", "Khám phá YouTube"), Page::Explore, matches!(p, Page::Explore | Page::Mood(_)), &mut go_to);
+    nav(ui, icon::LIST_MUSIC, super::mixed_playlist::title(), Page::MixedPlaylist, matches!(p, Page::MixedPlaylist | Page::MixedSearch(_)), &mut go_to);
+    for source in [crate::catalog::Catalog::Zing, crate::catalog::Catalog::Nct] {
+        let selected = matches!(p, Page::CatalogHome(active) | Page::CatalogSearch(active, _) if active == source);
+        nav(ui, icon::MUSIC, source.name(), Page::CatalogHome(source), selected, &mut go_to);
+    }
     ui.add_space(14.0);
     let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     if !item.hide_divider {
@@ -452,21 +450,6 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
     let list_h = (ui.available_height() - bottom_h).max(0.0);
     ui.allocate_ui(vec2(ui.available_width(), list_h), |ui| {
         if !app.logged_in {
-            // Too wide to squeeze: cross-fade the message and the rail's icon.
-            if t < 0.5 {
-                ui.multiply_opacity(1.0 - 2.0 * t);
-                ui.label(egui::RichText::new("Sign in to see your playlists").color(theme::text_dim()));
-                ui.add_space(8.0);
-                if widgets::pill(ui, "Sign in", Some(icon::CIRCLE_USER), false).clicked() {
-                    app.start_sign_in(ui.ctx());
-                }
-            } else {
-                ui.multiply_opacity(2.0 * t - 1.0);
-                nav(ui, icon::CIRCLE_USER, "Sign in", Page::Settings, false, &mut go_to);
-                if go_to.is_some() {
-                    app.settings_tab = super::pages::SettingsTab::Account;
-                }
-            }
             return;
         }
         // The heading folds away with the labels.
@@ -586,7 +569,7 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
     };
     let mut restart = false;
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-        nav(ui, icon::SETTINGS, "Settings", Page::Settings, p == Page::Settings, &mut go_to);
+        nav(ui, icon::SETTINGS, crate::i18n::label("Settings", "Cài đặt"), Page::Settings, p == Page::Settings, &mut go_to);
         if transferring {
             super::transfer::sidebar_card(app, ui, collapsed, a, ICON_X);
         }
@@ -628,7 +611,7 @@ fn refresh_button(ui: &mut Ui) -> egui::Response {
     const SIZE: f32 = 18.0;
     let d = SIZE + 18.0;
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(d), Sense::click());
-    let resp = named(resp, "Refresh").on_hover_text("Refresh (F5)").on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = named(resp, crate::i18n::label("Refresh", "Làm mới")).on_hover_text("Refresh (F5)").on_hover_cursor(egui::CursorIcon::PointingHand);
     let h = theme::anim_bool(ui.ctx(), resp.id.with("h"), resp.hovered(), 0.15);
     if h > 0.0 {
         ui.painter().circle_filled(rect.center(), d / 2.0, theme::glass(0.10 * h));
@@ -708,10 +691,10 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
             ui.allocate_ui_with_layout(vec2(136.0, app.look().app.search_look.height.max(30.0)), egui::Layout::left_to_right(egui::Align::Center), |ui| logo_name(ui, tb, app.accent_color()));
             ui.add_space(10.0);
         }
-        if icon_button(ui, icon::CHEVRON_LEFT, 20.0, "Back", false).clicked() {
+        if icon_button(ui, icon::CHEVRON_LEFT, 20.0, crate::i18n::label("Back", "Quay lại"), false).clicked() {
             app.nav_back();
         }
-        if icon_button(ui, icon::CHEVRON_RIGHT, 20.0, "Forward", false).clicked() {
+        if icon_button(ui, icon::CHEVRON_RIGHT, 20.0, crate::i18n::label("Forward", "Tiến tới"), false).clicked() {
             app.nav_forward();
         }
         if refresh_button(ui).clicked() {
@@ -722,9 +705,10 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         // Room for the account button, and the window buttons when they're over this row;
         // in a narrow window the box gives way rather than run under them.
         let reserve = 50.0 + super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 20.0);
-        let narrowest = if super::titlebar::custom() { 120.0 } else { 240.0 };
+        let scope_width = if ui.available_width() >= 360.0 { 132.0 } else { 105.0 };
+        let narrowest = 64.0;
         let sl = &app.look().app.search_look;
-        let width = (ui.available_width() - reserve).clamp(narrowest, sl.max_px.max(narrowest));
+        let width = (ui.available_width() - reserve - scope_width - 14.0).clamp(narrowest, sl.max_px.max(narrowest));
         // Anywhere on the pill focuses the box, not just on the text area inside it.
         let (rect, field) = ui.allocate_exact_size(vec2(width, sl.height.max(30.0)), Sense::click());
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("search-box-right"), rect.right()));
@@ -804,7 +788,7 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         let edit = ui.put(
             inner,
             egui::TextEdit::singleline(&mut app.search_text)
-                .hint_text(egui::RichText::new(if app.show_podcasts { "Search songs, albums, artists, podcasts" } else { "Search songs, albums, artists" }).color(theme::text_faint()))
+                .hint_text(egui::RichText::new(crate::i18n::label("Search songs, albums, artists", "Tìm bài hát, album, nghệ sĩ")).color(theme::text_faint()))
                 .font(theme::regular(15.0))
                 .frame(egui::Frame::NONE)
                 .align(egui::Align2::LEFT_CENTER)
@@ -820,7 +804,7 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
         }
         if clearable {
             let x = Rect::from_center_size(pos2(rect.right() - 25.0, rect.center().y), Vec2::splat(30.0));
-            let resp = named(ui.interact(x, ui.scope_id().with("search-clear"), Sense::click()), "Clear search").on_hover_cursor(egui::CursorIcon::PointingHand);
+            let resp = named(ui.interact(x, ui.scope_id().with("search-clear"), Sense::click()), crate::i18n::label("Clear search", "Xóa từ khóa")).on_hover_cursor(egui::CursorIcon::PointingHand);
             let h = theme::anim_bool(ui.ctx(), resp.id.with("h"), resp.hovered(), 0.15);
             if h > 0.0 {
                 ui.painter().circle_filled(x.center(), 15.0, theme::glass(0.10 * h));
@@ -850,14 +834,24 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
             let q = picked.unwrap_or_else(|| app.search_text.trim().to_owned());
             if !q.is_empty() {
                 app.suggestions = Default::default();
-                app.actions.push(Action::Go(Page::Search(q)));
+                app.submit_global_search(q);
             }
         }
 
+        let all = crate::i18n::label("All sources", "Tất cả");
+        egui::ComboBox::from_id_salt("global-search-source")
+            .width(scope_width)
+            .selected_text(app.search_provider.map_or(all, super::mixed_playlist::Source::name))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.search_provider, None, all);
+                for source in super::mixed_playlist::Source::ALL {
+                    ui.selectable_value(&mut app.search_provider, Some(source), source.name());
+                }
+            });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 20.0));
             let (r, resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
-            let resp = named(resp, "Account").on_hover_cursor(egui::CursorIcon::PointingHand);
+            let resp = named(resp, crate::i18n::label("Account", "Tài khoản")).on_hover_cursor(egui::CursorIcon::PointingHand);
             let initial = app.account_name.as_deref().and_then(|n| n.chars().next()).unwrap_or('?');
             if app.logged_in {
                 ui.painter().circle_filled(r.center(), 18.0, theme::lerp_color(app.accent_color(), Color32::BLACK, 0.35));
@@ -987,7 +981,7 @@ pub fn suggestions(app: &mut App, ctx: &egui::Context) {
                         if resp.is_pointer_button_down_on() || resp.clicked() {
                             app.suggestions = Default::default();
                             app.search_focused = false;
-                            app.actions.push(Action::Go(Page::Search(term)));
+                            app.submit_global_search(term);
                             break;
                         }
                     }
@@ -1539,7 +1533,7 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         let dx = dx * chrome.transport_gap.clamp(0.7, 1.5);
         let r = Rect::from_center_size(center + vec2(dx, 0.0), Vec2::splat(size + 16.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-        if matches!(name, "Previous" | "Next") {
+        if matches!(glyph, icon::SKIP_BACK | icon::SKIP_FORWARD) {
             child.multiply_opacity(chrome.side_alpha.clamp(0.5, 1.0));
         }
         let resp = icon_button(&mut child, glyph, size, name, active);
@@ -1549,10 +1543,10 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         resp.clicked()
     };
     let (outer, inner) = if tight { (108.0, 56.0) } else { (124.0, 64.0) };
-    if ctl(ui, -outer, icon::SHUFFLE, "Shuffle", app.queue.shuffled(), 18.0) {
+    if ctl(ui, -outer, icon::SHUFFLE, crate::i18n::label("Shuffle", "Phát ngẫu nhiên"), app.queue.shuffled(), 18.0) {
         app.toggle_shuffle();
     }
-    if ctl(ui, -inner, icon::SKIP_BACK, "Previous", false, 22.0) {
+    if ctl(ui, -inner, icon::SKIP_BACK, crate::i18n::label("Previous", "Bài trước"), false, 22.0) {
         app.prev();
     }
     let (rep_icon, rep_on) = match app.queue.repeat {
@@ -1560,16 +1554,16 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         Repeat::All => (icon::REPEAT, true),
         Repeat::One => (icon::REPEAT_1, true),
     };
-    if ctl(ui, inner, icon::SKIP_FORWARD, "Next", false, 22.0) {
+    if ctl(ui, inner, icon::SKIP_FORWARD, crate::i18n::label("Next", "Bài tiếp theo"), false, 22.0) {
         app.next();
     }
-    if ctl(ui, outer, rep_icon, "Repeat", rep_on, 18.0) {
+    if ctl(ui, outer, rep_icon, crate::i18n::label("Repeat", "Lặp lại"), rep_on, 18.0) {
         app.queue.repeat = app.queue.repeat.next();
     }
     let play_size = chrome.play_scale.clamp(0.8, 1.5);
     let pr = Rect::from_center_size(center, Vec2::splat(46.0 * play_size));
     let presp = ui.interact(pr, ui.scope_id().with("play"), Sense::click());
-    let presp = named(presp, if playing { "Pause" } else { "Play" }).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let presp = named(presp, if playing { crate::i18n::label("Pause", "Tạm dừng") } else { crate::i18n::label("Play", "Phát") }).on_hover_cursor(egui::CursorIcon::PointingHand);
     let ph = theme::anim_bool(ui.ctx(), presp.id.with("h"), presp.hovered(), 0.15);
     let controls = &app.look().app.controls;
     let scale = play_size * if presp.is_pointer_button_down_on() { 0.92 } else { 1.0 + (controls.play_hover_scale - 1.0) * ph };
@@ -1644,18 +1638,18 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         resp.clicked()
     };
     // Right to left: now playing keeps the corner (as in YouTube Music), the mini player next to it.
-    if right_btn(ui, if app.np_open { icon::CHEVRON_DOWN } else { icon::CHEVRON_UP }, "Now playing", app.np_open) {
+    if right_btn(ui, if app.np_open { icon::CHEVRON_DOWN } else { icon::CHEVRON_UP }, crate::i18n::label("Now playing", "Đang phát"), app.np_open) {
         app.actions.push(Action::OpenNowPlaying(!app.np_open));
     }
     if right_btn(ui, icon::PICTURE_IN_PICTURE, "Mini player (Ctrl+M)", false) {
         app.actions.push(Action::Mini(true));
     }
-    if right_btn(ui, icon::LIST_MUSIC, "Queue", app.queue_shown()) {
+    if right_btn(ui, icon::LIST_MUSIC, crate::i18n::label("Queue", "Hàng đợi"), app.queue_shown()) {
         app.toggle_queue();
     }
     // Not lit for a song without lyrics: now playing shows its artwork instead.
     let lyrics_on = app.np_open && app.np_tab == NpTab::Lyrics && !app.no_lyrics();
-    if right_btn(ui, icon::MIC_VOCAL, "Lyrics", lyrics_on) {
+    if right_btn(ui, icon::MIC_VOCAL, crate::i18n::label("Lyrics", "Lời bài hát"), lyrics_on) {
         if lyrics_on {
             app.np_tab = NpTab::Art;
         } else {
@@ -1679,7 +1673,7 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         Rect::from_center_size(pos2(slider.left() - 18.0, cy), Vec2::splat(32.0))
     };
     let vglyph = if vol == 0.0 { icon::VOLUME_X } else if vol < 0.5 { icon::VOLUME_1 } else { icon::VOLUME_2 };
-    let mresp = named(ui.interact(vi, ui.scope_id().with("mute"), Sense::click()), "Mute").on_hover_cursor(egui::CursorIcon::PointingHand);
+    let mresp = named(ui.interact(vi, ui.scope_id().with("mute"), Sense::click()), crate::i18n::label("Mute", "Tắt tiếng")).on_hover_cursor(egui::CursorIcon::PointingHand);
     icon_at(ui, vi.center(), vglyph, 18.0, if mresp.hovered() { theme::text() } else { theme::text_dim() });
     if compact_vol {
         let pop_id = ui.scope_id().with("vol-pop");
@@ -1736,7 +1730,7 @@ pub(super) fn normalization_note(app: &App) -> Option<String> {
 pub(super) fn volume_slider(app: &mut App, ui: &mut Ui, slider: Rect, salt: &str) {
     let vol = app.audio.volume();
     let vresp = ui.interact(slider, ui.scope_id().with(salt), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::PointingHand);
-    vresp.widget_info(|| egui::WidgetInfo::slider(true, vol as f64, "Volume"));
+    vresp.widget_info(|| egui::WidgetInfo::slider(true, vol as f64, crate::i18n::label("Volume", "Âm lượng")));
     let vh = theme::anim_bool(ui.ctx(), ui.scope_id().with((salt, "h")), vresp.hovered() || vresp.dragged(), 0.15);
     let track_r = Rect::from_center_size(slider.center(), vec2(slider.width(), 4.0));
     ui.painter().rect_filled(track_r, 2.0, theme::glass(0.15));
@@ -1782,7 +1776,7 @@ pub fn queue_drawer(app: &mut App, ui: &mut Ui) {
         white_on_card = theme::light();
     }
     ui.horizontal(|ui| {
-        let (label, size) = if q.queue_upper { ("UP NEXT", 13.0) } else { ("Up next", 20.0) };
+        let (label, size) = if q.queue_upper { ("UP NEXT", 13.0) } else { (crate::i18n::label("Up next", "Sắp phát"), 20.0) };
         let heading = egui::RichText::new(label).font(theme::bold(size));
         ui.label(if white_on_card { heading.color(Color32::WHITE) } else { heading });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1790,20 +1784,20 @@ pub fn queue_drawer(app: &mut App, ui: &mut Ui) {
             ui.add_space(super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 0.0));
             let close = if white_on_card {
                 let (r, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-                let resp = named(resp, "Close queue").on_hover_text("Close queue").on_hover_cursor(egui::CursorIcon::PointingHand);
+                let resp = named(resp, crate::i18n::label("Close queue", "Đóng hàng đợi")).on_hover_text(crate::i18n::label("Close queue", "Đóng hàng đợi")).on_hover_cursor(egui::CursorIcon::PointingHand);
                 let h = theme::anim_bool(ui.ctx(), resp.id.with("h"), resp.hovered(), 0.15);
                 ui.painter().circle_filled(r.center(), 16.0, theme::with_alpha(Color32::WHITE, 0.15 * h));
                 widgets::focus_ring(ui, &resp, r, 16.0);
                 icon_at(ui, r.center(), icon::X, 16.0, Color32::WHITE);
                 resp
             } else {
-                icon_button(ui, icon::X, 16.0, "Close queue", false)
+                icon_button(ui, icon::X, 16.0, crate::i18n::label("Close queue", "Đóng hàng đợi"), false)
             };
             if close.clicked() {
                 app.queue_open = false;
             }
             // Left of Close, with more in the queue than the song playing.
-            if app.queue.tracks.len() > usize::from(app.queue.index.is_some()) && icon_button(ui, icon::TRASH_2, 15.0, "Clear queue", false).clicked() {
+            if app.queue.tracks.len() > usize::from(app.queue.index.is_some()) && icon_button(ui, icon::TRASH_2, 15.0, crate::i18n::label("Clear queue", "Xóa hàng đợi"), false).clicked() {
                 app.actions.push(Action::QueueClear);
             }
         });
@@ -1838,7 +1832,7 @@ pub fn queue_list(app: &mut App, ui: &mut Ui, salt: &str) {
     let q = app.look().app.queue_look;
     let differs = q.thumb_radius.is_some() || q.radius.is_some() || q.pad.is_some() || q.hover_border.is_some() || q.image_zoom.is_some() || q.image_dim.is_some();
     if app.queue.tracks.is_empty() {
-        ui.label(egui::RichText::new("Nothing queued yet").color(theme::text_dim()));
+        ui.label(egui::RichText::new(crate::i18n::label("Nothing queued yet", "Hàng đợi đang trống")).color(theme::text_dim()));
         return;
     }
     let start = app.queue.index.unwrap_or(0);
@@ -1846,16 +1840,25 @@ pub fn queue_list(app: &mut App, ui: &mut Ui, salt: &str) {
     playing_from(app, ui);
     ui.horizontal(|ui| {
         ui.add_space(q.side_pad);
-        ui.checkbox(&mut app.autoplay, egui::RichText::new("Autoplay similar songs").color(theme::text_dim())).on_hover_cursor(egui::CursorIcon::PointingHand);
+        ui.checkbox(&mut app.autoplay, egui::RichText::new(crate::i18n::label("Autoplay similar songs", "Tự phát bài tương tự")).color(theme::text_dim())).on_hover_cursor(egui::CursorIcon::PointingHand);
     });
     ui.add_space(6.0);
     // A new current song (or a new queue) brings it back to the top of the list.
     let mut area = egui::ScrollArea::vertical().id_salt(("queue", salt)).auto_shrink(false);
     let shown = egui::Id::unique(("queue-at", salt));
     let at = (app.queue.index, app.queue.current().map(|t| t.id.clone()));
-    if ui.data(|d| d.get_temp::<(Option<usize>, Option<String>)>(shown)).as_ref() != Some(&at) {
+    let changed = ui.data(|d| d.get_temp::<(Option<usize>, Option<String>)>(shown)).as_ref() != Some(&at);
+    if changed {
         ui.data_mut(|d| d.insert_temp(shown, at));
-        area = area.vertical_scroll_offset(start as f32 * widgets::row_height(ui));
+    }
+    let reveal = if salt == "drawer" {
+        app.queue_reveal.take().and_then(|id| app.queue.tracks.iter().enumerate().skip(start).find(|(_, track)| track.id == id).map(|(i, _)| i))
+    } else {
+        None
+    };
+    if let Some(index) = reveal.or(changed.then_some(start)) {
+        let gap = if index > start && app.queue.index.is_some() { q.current_gap } else { 0.0 };
+        area = area.vertical_scroll_offset(index as f32 * widgets::row_height(ui) + gap);
     }
     ui.data_mut(|d| d.insert_temp(egui::Id::unique("in-queue"), differs));
     area.show(ui, |ui| {

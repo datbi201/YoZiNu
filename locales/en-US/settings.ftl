@@ -280,7 +280,6 @@ settings-open = Open
 
 ## Network
 
-settings-network = Network
 settings-proxy = Proxy
 settings-proxy-desc = Send everything ytm-rs fetches through a proxy: songs, lyrics, sign-in and Listen together.
 settings-proxy-windows-uses = Windows is set to use { $proxy }.
@@ -365,7 +364,7 @@ settings-whats-new-in = What's new in { $version }
 
 ## About
 
-settings-about-tagline = A fast, native YouTube Music client.
+settings-about-tagline = Built from the original ytm-rs, with Zing MP3 and NhacCuaTui integrated.
 settings-about-lyrics-sources = Better Lyrics API: Musixmatch, LRCLIB, QQ, KuGou and Better Lyrics TTML
 settings-about-themes-credit = Adapted from the Better Lyrics theme store; each card credits its creators
 settings-background = Background

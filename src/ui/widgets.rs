@@ -1041,6 +1041,9 @@ pub fn song_actions(ui: &mut Ui, t: &Track, liked: bool, remove: Option<usize>, 
     if menu_action(ui, Some(icon::LIST_PLUS), "Add to playlist") {
         acts.push(Action::AddToPlaylist(vec![t.clone()]));
     }
+    if menu_action(ui, Some(icon::LIST_MUSIC), super::mixed_playlist::add_label()) {
+        acts.push(Action::AddToMixed(t.clone()));
+    }
     if let Some(i) = remove
         && menu_action(ui, Some(icon::LIST_MINUS), "Remove from playlist")
     {
@@ -1287,6 +1290,14 @@ pub fn visible_rows_gap(ui: &mut Ui, n: usize, after: usize, gap: f32, mut row: 
 
 /// Song row: cover (or index), title, artists, album, duration. Click plays.
 pub fn track_row(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>) -> Response {
+    track_row_inner(ui, t, o, acts, false)
+}
+
+pub fn search_track_row(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>) -> Response {
+    track_row_inner(ui, t, o, acts, !o.pick)
+}
+
+fn track_row_inner(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>, mixed_add: bool) -> Response {
     let in_queue;
     let rl = match ui.data(|d| d.get_temp::<bool>(egui::Id::unique("in-queue"))).filter(|on| *on).map(|_| crate::preset::active().app.queue_look) {
         Some(q) => {
@@ -1310,7 +1321,8 @@ pub fn track_row(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>) ->
     let rating_w = if show_rating { 28.0 } else { 0.0 };
     // Picking: the cover (left 54 px) plays, the rest of the row picks.
     let hit_left = if o.pick && o.number.is_none() { rect.left() + 54.0 } else { rect.left() };
-    let hit_rect = Rect::from_min_max(pos2(hit_left, rect.top()), pos2(rect.right() - 42.0, rect.bottom()));
+    let actions_width = if mixed_add { 74.0 } else { 42.0 };
+    let hit_rect = Rect::from_min_max(pos2(hit_left, rect.top()), pos2(rect.right() - actions_width, rect.bottom()));
     let resp = named(ui.interact(hit_rect, base.id.with("play"), Sense::click()), &song_name(&t.title, t.explicit)).on_hover_cursor(egui::CursorIcon::PointingHand);
     let h = theme::anim_bool(ui.ctx(), base.id.with("h"), hovered, 0.15);
     // Grows or shrinks on the row's own place, the list around it staying put.
@@ -1381,7 +1393,7 @@ pub fn track_row(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>) ->
         }
         x += rl.thumb_px + 14.0;
     }
-    let right = rect.right() - 41.0 - rl.pad;
+    let right = rect.right() - actions_width + 1.0 - rl.pad;
     let dim = theme::with_alpha(theme::text_dim(), rl.byline_alpha * opacity);
     let text_right = right - dur_w - rating_w;
     let avail = text_right - x;
@@ -1489,6 +1501,20 @@ pub fn track_row(ui: &mut Ui, t: &Track, o: &RowOpts, acts: &mut Vec<Action>) ->
             if let Some(d) = t.duration {
                 digits_at(ui, pos2(right, cy), &super::fmt_time(d), theme::regular(13.0), dim);
             }
+        }
+    }
+    if mixed_add {
+        let slot = Rect::from_center_size(pos2(rect.right() - 52.0, cy), Vec2::splat(30.0));
+        let add = named(ui.interact(slot, base.id.with("mixed-add"), Sense::click()), super::mixed_playlist::add_label())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(super::mixed_playlist::add_label());
+        if add.hovered() {
+            ui.painter().circle_filled(slot.center(), 14.0, theme::glass(0.16));
+        }
+        icon_at(ui, slot.center(), icon::LIST_PLUS, 18.0, if add.hovered() { theme::text() } else { theme::text_dim() });
+        focus_ring(ui, &add, slot, 14.0);
+        if add.clicked() {
+            acts.push(Action::AddToMixed(t.clone()));
         }
     }
     let more_rect = Rect::from_center_size(pos2(rect.right() - 20.0, cy), Vec2::splat(30.0));

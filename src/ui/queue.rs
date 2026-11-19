@@ -48,6 +48,8 @@ pub struct Queue {
     /// The song playing (or paused, or loading).
     pub index: Option<usize>,
     pub repeat: Repeat,
+    /// A saved mixed playlist plays its selected tracks without automatic suggestions.
+    pub mixed: bool,
     /// Shuffle is on: the songs' ids in the order they had, to go back to when it's off.
     /// A new queue starts with it off.
     unshuffled: Option<Vec<String>>,
@@ -81,7 +83,7 @@ const SAVED_AFTER: usize = 150;
 
 impl Queue {
     pub fn new(repeat: Repeat) -> Self {
-        Self { tracks: Vec::new(), elsewhere: Default::default(), index: None, repeat, unshuffled: None, fill: None, hide_explicit: false }
+        Self { tracks: Vec::new(), elsewhere: Default::default(), index: None, repeat, mixed: false, unshuffled: None, fill: None, hide_explicit: false }
     }
 
     pub fn shuffled(&self) -> bool {
@@ -129,6 +131,7 @@ impl Queue {
         self.index = Some(start.min(tracks.len() - 1));
         self.tracks = tracks;
         self.elsewhere.clear();
+        self.mixed = false;
         self.unshuffled = None;
         true
     }
@@ -140,6 +143,7 @@ impl Queue {
         self.tracks = vec![cur.clone()];
         self.index = Some(0);
         self.elsewhere.clear();
+        self.mixed = false;
         self.unshuffled = None;
         self.fill = None;
         Some(cur)
@@ -162,6 +166,7 @@ impl Queue {
         self.tracks = tracks;
         self.elsewhere.clear();
         self.index = Some(index);
+        self.mixed = false;
         self.fill = None;
         self.unshuffled = None;
         self.drop_explicit();

@@ -13,6 +13,13 @@ mod audio;
 mod awake;
 mod backdrop;
 mod backend;
+#[macro_export]
+macro_rules! app_rev {
+    () => { "Rev0.4" };
+}
+
+mod catalog;
+mod nct;
 mod bidi;
 mod cache;
 mod canvas;
@@ -50,6 +57,7 @@ mod ytdlp;
 mod ytm;
 mod vault;
 mod ytmapi;
+mod zing;
 
 use std::sync::{Arc, OnceLock};
 

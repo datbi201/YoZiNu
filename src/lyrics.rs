@@ -16,14 +16,16 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use unicode_normalization::UnicodeNormalization;
 
 const API: &str = "https://lyrics.api.dacubeking.com/";
 const UNISON_API: &str = "https://unison.betterlyrics.org/lyrics";
 
-/// One source of lyrics, in the extension's default priority order (its
-/// `PROVIDER_CONFIGS`, without the two YouTube sources).
+/// One source of lyrics. Zing's own lyrics take priority for its recordings;
+/// the remaining providers keep the extension's default order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum Provider {
+    ZingWords,
     BLyricsRich,
     UnisonRich,
     BinimumRich,
@@ -50,7 +52,8 @@ pub enum SyncKind {
 }
 
 impl Provider {
-    pub const ALL: [Provider; 14] = [
+    pub const ALL: [Provider; 15] = [
+        Provider::ZingWords,
         Provider::BLyricsRich,
         Provider::UnisonRich,
         Provider::BinimumRich,
@@ -70,6 +73,7 @@ impl Provider {
     /// The extension's key for it (also how the order is stored).
     pub fn key(self) -> &'static str {
         match self {
+            Provider::ZingWords => "zing-wordsynced",
             Provider::BLyricsRich => "bLyrics-richsynced",
             Provider::UnisonRich => "unison-richsynced",
             Provider::BinimumRich => "binimum-richsynced",
@@ -93,6 +97,7 @@ impl Provider {
 
     pub fn name(self) -> &'static str {
         match self {
+            Provider::ZingWords => "Zing MP3",
             Provider::BLyricsRich | Provider::BLyricsSynced => "Better Lyrics",
             Provider::UnisonRich | Provider::UnisonWord | Provider::UnisonSynced | Provider::UnisonPlain => "Unison",
             Provider::BinimumRich | Provider::BinimumSynced => "BiniLyrics",
@@ -106,7 +111,7 @@ impl Provider {
     pub fn sync(self) -> SyncKind {
         match self {
             Provider::BLyricsRich | Provider::UnisonRich | Provider::BinimumRich => SyncKind::Syllable,
-            Provider::UnisonWord | Provider::PortatoRich | Provider::MusixmatchRich => SyncKind::Word,
+            Provider::ZingWords | Provider::UnisonWord | Provider::PortatoRich | Provider::MusixmatchRich => SyncKind::Word,
             Provider::BLyricsSynced
             | Provider::UnisonSynced
             | Provider::BinimumSynced
@@ -116,6 +121,28 @@ impl Provider {
             Provider::UnisonPlain | Provider::LrclibPlain => SyncKind::Unsynced,
         }
     }
+}
+
+pub fn zing_words(sentences: &Value) -> Option<Lyrics> {
+    let mut lines: Vec<_> = sentences.as_array()?.iter().filter_map(|sentence| {
+        let mut parts: Vec<_> = sentence["words"].as_array()?.iter().filter_map(|word| {
+            let text = word["data"].as_str()?.trim();
+            let start = i32::try_from(word["startTime"].as_u64()?).ok()?;
+            let end = i32::try_from(word["endTime"].as_u64()?).ok()?;
+            (!text.is_empty() && end >= start).then(|| Part { start, dur: end - start, text: text.to_owned(), bg: false })
+        }).collect();
+        parts.sort_by_key(|part| part.start);
+        let start = parts.first()?.start;
+        let end = parts.iter().map(|part| part.start + part.dur).max()?;
+        // The word renderer uses each part verbatim, including inter-word spaces.
+        let text = parts.iter().map(|part| part.text.as_str()).collect::<Vec<_>>().join(" ");
+        for part in parts.iter_mut().skip(1) {
+            part.text.insert(0, ' ');
+        }
+        Some(Line { start, dur: end - start, text, parts, ..Line::default() })
+    }).collect();
+    lines.sort_by_key(|line| line.start);
+    Lyrics::new(Provider::ZingWords, lines, None, Vec::new())
 }
 
 /// How a set of lines is timed, decided from the lines themselves (`deriveSyncType`).
@@ -268,6 +295,45 @@ impl Client {
         }
         recent.push_back((q.video_id.to_owned(), set.clone()));
         Ok(set)
+    }
+
+    /// Match the public LRCLib result by title, artist and recording length.
+    pub async fn fetch_catalog(&self, track: &crate::model::Track) -> anyhow::Result<LyricsSet> {
+        let Some(track_seconds) = track.duration.filter(|seconds| *seconds > 0) else {
+            return Ok(LyricsSet::default());
+        };
+        let artist = track.artist_line();
+        if artist.trim().is_empty() {
+            return Ok(LyricsSet::default());
+        }
+        let candidates: Vec<Value> = self.http.get("https://lrclib.net/api/search")
+            .query(&[("track_name", track.title.as_str()), ("artist_name", artist.as_str())])
+            .timeout(Duration::from_secs(5))
+            .send().await?.error_for_status()?.json().await?;
+        let clean = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().nfc().collect::<String>();
+        let title = clean(&track.title);
+        let artist = clean(&artist);
+        let matched = candidates.iter().filter_map(|value| {
+            if clean(value["trackName"].as_str()?) != title || clean(value["artistName"].as_str()?) != artist {
+                return None;
+            }
+            let duration = value["duration"].as_f64()?;
+            let delta = (f64::from(track_seconds) - duration).abs();
+            (delta <= 4.0).then_some((value, delta))
+        }).min_by(|(a, ad), (b, bd)| {
+            ad.total_cmp(bd).then_with(|| b["syncedLyrics"].is_string().cmp(&a["syncedLyrics"].is_string()))
+        });
+        let mut sources = Vec::new();
+        if let Some((value, _)) = matched {
+            if let Some(text) = value["syncedLyrics"].as_str() {
+                let duration_ms = track_seconds.saturating_mul(1000).min(i32::MAX as u32) as i32;
+                sources.extend(Lyrics::new(Provider::LrclibSynced, parse_lrc(text, duration_ms), None, Vec::new()));
+            }
+            if let Some(text) = value["plainLyrics"].as_str() {
+                sources.extend(Lyrics::new(Provider::LrclibPlain, parse_plain(text), None, Vec::new()));
+            }
+        }
+        Ok(LyricsSet { sources })
     }
 
     async fn fetch_stream(&self, q: &Query<'_>) -> anyhow::Result<Vec<Lyrics>> {

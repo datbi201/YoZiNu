@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 
 use egui::{Align2, Color32, Rect, RichText, Sense, Ui, Vec2, pos2, vec2};
 
-use super::widgets::{self, RowOpts, card, chip, h_scroll, named, paint_cover, pill, shelf_header, track_row};
+use super::widgets::{self, RowOpts, card, chip, h_scroll, named, paint_cover, pill, search_track_row, shelf_header, track_row};
 use super::find::{ListFind, Sort};
 use super::row_drag::{self, RowDrag};
 use super::{Action, App, LibTab, Page, Selection};
@@ -61,6 +61,9 @@ pub fn page(app: &mut App, ui: &mut Ui, now: f64) {
             Page::Settings => {}
             Page::Transfer => super::transfer::page(app, ui, now),
             Page::Jam => super::jam::page(app, ui),
+            Page::MixedPlaylist => super::mixed_playlist::page(app, ui),
+            Page::MixedSearch(query) => super::mixed_playlist::results(app, ui, query),
+            Page::CatalogHome(source) | Page::CatalogSearch(source, _) => super::catalog::page(app, ui, now, *source),
         }
         ui.add_space(40.0 + insets[1]);
     });
@@ -732,7 +735,7 @@ fn search(app: &mut App, ui: &mut Ui, q: &str, now: f64) {
                 ui.push_id(i, |ui| {
                     row_drag::grip(ui, drag, ids("songs"), i, t);
                     let o = RowOpts { pick, plays_col, ..rows.opts(liked, t, None, false) };
-                    if track_row(ui, t, &o, acts).clicked() {
+                    if search_track_row(ui, t, &o, acts).clicked() {
                         acts.push(play(t));
                     }
                 });
@@ -765,7 +768,7 @@ fn search(app: &mut App, ui: &mut Ui, q: &str, now: f64) {
             ui.push_id(("videos", i), |ui| {
                 row_drag::grip(ui, drag, ids("videos"), i, t);
                 let o = RowOpts { pick, plays_col, ..rows.opts(liked, t, None, false) };
-                if track_row(ui, t, &o, acts).clicked() {
+                if search_track_row(ui, t, &o, acts).clicked() {
                     acts.push(play(t));
                 }
             });
@@ -781,7 +784,7 @@ fn search(app: &mut App, ui: &mut Ui, q: &str, now: f64) {
             ui.push_id(("more", i), |ui| {
                 row_drag::grip(ui, drag, ids("more"), i, t);
                 let o = RowOpts { pick, plays_col, ..rows.opts(liked, t, None, true) };
-                if track_row(ui, t, &o, acts).clicked() {
+                if search_track_row(ui, t, &o, acts).clicked() {
                     acts.push(play(t));
                 }
             });
@@ -1439,25 +1442,21 @@ pub(super) enum SettingsTab {
     Playback,
     Lyrics,
     Appearance,
-    Connections,
     General,
-    Shortcuts,
     About,
 }
 
 impl SettingsTab {
     /// Most used first, which is how they're listed.
-    pub(super) const ALL: [Self; 8] = [Self::Account, Self::Playback, Self::Lyrics, Self::Appearance, Self::Connections, Self::General, Self::Shortcuts, Self::About];
+    pub(super) const ALL: [Self; 6] = [Self::Account, Self::Playback, Self::Lyrics, Self::Appearance, Self::General, Self::About];
 
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Playback => tr!("settings-playback"),
             Self::Lyrics => tr!("settings-lyrics"),
             Self::Appearance => tr!("settings-appearance"),
-            Self::Connections => tr!("settings-connections"),
             Self::Account => tr!("settings-account"),
             Self::General => tr!("settings-general"),
-            Self::Shortcuts => tr!("settings-keyboard-shortcuts"),
             Self::About => tr!("settings-about"),
         }
     }
@@ -1637,30 +1636,28 @@ fn settings_tab(app: &mut App, ui: &mut Ui, tab: SettingsTab) {
             settings_mini(app, ui);
             settings_app_icon(app, ui);
         }
-        SettingsTab::Account => settings_account(app, ui),
-        SettingsTab::Connections => {
-            settings_connections(app, ui);
-            super::presence::settings(app, ui);
-        }
+        SettingsTab::Account => {
+            settings_account(app, ui);
+            settings_section(ui, crate::i18n::label("Music services", "Dịch vụ âm nhạc"), None, None, |ui| {
+                let desc = crate::i18n::label("Opens the official site. YoZiNu plays as a guest.", "Mở trang chính thức. YoZiNu phát nhạc ở chế độ khách.");
+                setting_row(ui, "Zing MP3", Some(desc), |ui| {
+                    ui.hyperlink_to(crate::i18n::label("Open Zalo sign-in", "Mở đăng nhập Zalo"), "https://zingmp3.vn/");
+                });
+                divider(ui);
+                setting_row(ui, "NhacCuaTui", Some(desc), |ui| {
+                    ui.hyperlink_to(crate::i18n::label("Open NCT ID sign-in", "Mở đăng nhập NCT ID"), "https://id.nhaccuatui.com/dang-nhap");
+                });
+            });
+        },
         SettingsTab::General => {
             settings_language(app, ui);
             settings_window(app, ui);
             settings_downloads(ui);
-            super::transfer::settings_section(app, ui);
-            settings_section(ui, tr!("settings-network"), None, None, |ui| network(app, ui));
             // Last, as most apps keep it.
             settings_storage(app, ui);
         }
-        SettingsTab::Shortcuts => {
-            super::hotkeys::settings_section(app, ui);
-            settings_shortcuts(ui);
-        }
         SettingsTab::About => {
-            settings_updates(app, ui);
             settings_about(ui);
-            if !filtering() {
-                settings_sign_off(app, ui);
-            }
         }
     }
 }
@@ -2811,7 +2808,9 @@ fn settings_shortcuts(ui: &mut Ui) {
 /// Settings › About.
 fn settings_about(ui: &mut Ui) {
     settings_section(ui, tr!("settings-about"), None, None, |ui| {
-        setting_row(ui, &format!("ytm-rs {}", crate::update::build_version()), Some(tr!("settings-about-tagline")), |_| {});
+        setting_row(ui, concat!("YoZiNu ", crate::app_rev!()), Some(tr!("settings-about-tagline")), |ui| {
+            ui.hyperlink_to("ytm-rs · GPL-3.0", "https://github.com/grapedjuice/ytm-rs");
+        });
         for (title, desc) in [
             (tr!("settings-lyrics"), tr!("settings-about-lyrics-sources")),
             (tr!("settings-themes"), tr!("settings-about-themes-credit")),

@@ -92,11 +92,10 @@ struct Entry {
 /// Settings' categories and sections, by their titles. One named as its category opens
 /// that; any other is looked for with Settings' own search.
 /// As Settings titles them, in this run's language: a search for one finds it there.
-fn sections() -> [(&'static str, SettingsTab); 22] {
+fn sections() -> [(&'static str, SettingsTab); 16] {
     use SettingsTab::*;
     [
         (tr!("settings-account"), Account),
-        (tr!("settings-connections"), Connections),
         (tr!("settings-playback"), Playback),
         (tr!("settings-sound"), Playback),
         (tr!("settings-music-videos"), Playback),
@@ -111,11 +110,6 @@ fn sections() -> [(&'static str, SettingsTab); 22] {
         (tr!("settings-general"), General),
         (tr!("settings-window"), General),
         (tr!("settings-downloads"), General),
-        (tr!("settings-network"), General),
-        ("Import", General),
-        (tr!("settings-keyboard-shortcuts"), Shortcuts),
-        ("System-wide shortcuts", Shortcuts),
-        (tr!("settings-updates"), About),
         (tr!("settings-about"), About),
     ]
 }

@@ -149,6 +149,33 @@ impl App {
         self.start_queue(played);
     }
 
+    /// An empty queue keeps its first song ready at 0:00 until Play is pressed.
+    pub(super) fn queue_mixed_track(&mut self, track: Track) {
+        if self.queue.enqueue(track.clone()) {
+            self.play_pending = None;
+            self.queue_source = None;
+            self.playing_as = None;
+            self.ended = false;
+            self.audio.status.duration_ms.store(track.duration.map_or(0, |d| u64::from(d) * 1000), Ordering::Relaxed);
+            self.audio.status.position_ms.store(0, Ordering::Relaxed);
+            self.resume_at = Some(Duration::ZERO);
+            self.resume_counts = true;
+            self.request_art();
+            self.show_in_media(&track);
+            self.backend.request(Req::Lyrics(track));
+        } else {
+            self.prefetch_next();
+        }
+    }
+
+    pub(super) fn play_mixed(&mut self, tracks: Vec<Track>, start: usize) {
+        if self.queue.replace(tracks, start, None) {
+            self.queue.mixed = true;
+            self.catalog_recommending = None;
+            self.start_queue(true);
+        }
+    }
+
     /// Play `tracks` shuffled, with shuffle on; `fill` as for `play_list_filling`.
     pub(super) fn play_shuffled(&mut self, tracks: Vec<Track>, fill: Option<QueueFill>) {
         let hidden = self.hide_explicit && !tracks.is_empty() && tracks.iter().all(|t| t.explicit);
@@ -178,6 +205,7 @@ impl App {
             return;
         }
         self.queue.adopt(s.queue, s.index);
+        self.queue.mixed = s.mixed;
         let shown = s.playing_as.clone().unwrap_or_else(|| track.clone());
         self.playing_as = s.playing_as.map(|song| PlayingAs { generation: self.generation, listed: track.id.clone(), song });
         let dur = shown.duration.map_or(s.duration_ms, |d| d as u64 * 1000);
@@ -236,6 +264,7 @@ impl App {
     pub(super) fn session_json(&self) -> Option<String> {
         let (queue, index) = self.queue.saved()?;
         serde_json::to_string(&Session {
+            mixed: self.queue.mixed,
             queue: queue.to_vec(),
             index,
             position_ms: self.audio.status.position().as_millis() as u64,
@@ -429,8 +458,9 @@ impl App {
     /// Keep the queue topped up so autoplay never stalls at the end; a playlist still
     /// coming in goes first.
     pub(super) fn top_up(&mut self) {
-        if self.autoplay && !self.radio_pending && !self.jam.guest() && self.queue.fill.is_none() && self.queue.at_end() && self.queue.repeat != Repeat::All
+        if self.autoplay && !self.queue.mixed && !self.radio_pending && !self.jam.guest() && self.queue.fill.is_none() && self.queue.at_end() && self.queue.repeat != Repeat::All
             && let Some(t) = self.current().cloned()
+            && self.catalog_recommending.as_deref() != Some(t.id.as_str())
         {
             self.radio_pending = true;
             self.backend.request(Req::Radio { song_of: self.song_of(&t), seed: t.id });
@@ -539,6 +569,21 @@ impl App {
         } else {
             self.audio.send(AudioCmd::Seek(Duration::from_secs_f64(seg.end)));
         }
+    }
+
+    /// Open a catalog track and append its service's recommendations.
+    pub(super) fn play_catalog(&mut self, track: Track) {
+        if self.current_id() == Some(track.id.as_str()) && !self.ended {
+            if !self.buffering {
+                self.toggle();
+            }
+            return;
+        }
+        let seed = track.id.clone();
+        self.queue_source = None;
+        self.catalog_recommending = Some(seed.clone());
+        self.play_list(vec![track], 0);
+        self.backend.request(Req::CatalogAutoplay { seed });
     }
 
     /// Fetch whatever plays after the current track so skipping is instant.

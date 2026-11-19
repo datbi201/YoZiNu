@@ -40,6 +40,8 @@ mod undo;
 mod vector;
 mod wheel;
 mod widgets;
+mod catalog;
+mod mixed_playlist;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -52,6 +54,7 @@ use souvlaki::MediaControlEvent;
 
 use crate::audio::{AudioEvent, AudioHandle};
 use crate::backend::{ArtistPage, Backend, Explore, Library, Req, Resp, SearchResults};
+use crate::catalog::{Catalog, SongShelf};
 use crate::lyrics::LyricsSet;
 use crate::media::Media;
 use crate::model::{Card, Chip, Shelf, Target, Track};
@@ -81,6 +84,22 @@ pub enum Page {
     Transfer,
     /// Listen together.
     Jam,
+    MixedPlaylist,
+    MixedSearch(String),
+    CatalogHome(Catalog),
+    CatalogSearch(Catalog, String),
+}
+
+/// Public feed and search for an outside catalog.
+#[derive(Default)]
+pub struct CatalogState {
+    pub searched: String,
+    pub results: Vec<Track>,
+    pub search_failed: bool,
+    pub loading: bool,
+    pub home: Option<Vec<SongShelf>>,
+    pub home_loading: bool,
+    pub home_failed: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Hash, Debug)]
@@ -227,6 +246,9 @@ pub enum Action {
     /// Keep a playlist at the top of the sidebar and Library › Playlists (true), or not.
     Pin(String, bool),
     AddToPlaylist(Vec<Track>),
+    AddToMixed(Track),
+    EditMixed(mixed_playlist::Edit),
+    PlayMixed(Vec<Track>, usize),
     /// Rows (indices into the open playlist) to take out of it.
     RemoveFromPlaylist(Vec<usize>),
     /// A song of your own playlist dragged to the gap between rows, if `id` is still at `from`.
@@ -393,6 +415,7 @@ pub struct App {
     was_focused: bool,
     /// Album / playlist / artist the queue was started from, so its card shows pause.
     queue_source: Option<Target>,
+    queue_reveal: Option<String>,
     /// The name of a source played straight from its card, which isn't kept (see `playing_from`).
     played_title: Option<(Target, String)>,
     /// Asked to play (shuffled?) before its songs are here: a playlist's first page, or
@@ -418,6 +441,7 @@ pub struct App {
     /// The current page's request failed with nothing cached: show a retry, not a skeleton.
     load_failed: bool,
     search_text: String,
+    search_provider: Option<mixed_playlist::Source>,
     suggestions: (String, Vec<crate::ytm::Suggestion>),
     /// The suggestion picked with the arrow keys, which Enter searches.
     suggest_sel: Option<usize>,
@@ -437,6 +461,10 @@ pub struct App {
     /// The Moods & genres category last opened.
     mood: Option<crate::ytm::MoodPage>,
     search: Option<SearchResults>,
+    mixed_playlist: mixed_playlist::State,
+    zing: CatalogState,
+    nct: CatalogState,
+    catalog_recommending: Option<String>,
     /// The search tab picked (YT Music, Library, Uploads) and the search it was picked on:
     /// another search starts on YT Music.
     search_scope: (String, Scope),
@@ -802,6 +830,7 @@ impl App {
             crate::transfer::Transfer::new(backend.data_dir(), Arc::new(move || b.wake()))
         };
         let hotkeys = hotkeys::State::new(backend.data_dir());
+        let mixed_playlist = mixed_playlist::State::load(backend.data_dir());
         let mut app = Self {
             backend,
             audio,
@@ -830,6 +859,7 @@ impl App {
             queue_checked: None,
             was_focused: false,
             queue_source: None,
+            queue_reveal: None,
             played_title: None,
             play_pending: None,
             bg,
@@ -845,6 +875,7 @@ impl App {
             loading: false,
             load_failed: false,
             search_text: String::new(),
+            search_provider: None,
             suggestions: Default::default(),
             suggest_sel: None,
             suggest_round: 0,
@@ -855,6 +886,10 @@ impl App {
             explore: None,
             mood: None,
             search: None,
+            mixed_playlist,
+            zing: CatalogState::default(),
+            nct: CatalogState::default(),
+            catalog_recommending: None,
             search_scope: Default::default(),
             scoped: Vec::new(),
             lists: Lists::default(),
@@ -920,7 +955,7 @@ impl App {
             language,
             updater: None,
             storage: Default::default(),
-            auto_update: get("auto_update").is_none_or(|v| v == "1"),
+            auto_update: false,
             // A nightly build stays on nightlies until told otherwise.
             update_nightly: get("update_channel").map_or_else(|| crate::update::is_nightly(&crate::update::build_version()), |v| v == "nightly"),
             close_to_tray: get("close_to_tray").is_some_and(|v| v == "1"),
@@ -1082,6 +1117,9 @@ impl App {
             Ok("uploads") => app.go(Page::Library(LibTab::Uploads)),
             Ok("liked") => app.go(Page::Library(LibTab::Songs)),
             Ok("history") => app.go(Page::Library(LibTab::History)),
+            Ok("mixed") => app.go(Page::MixedPlaylist),
+            Ok("zing") => app.go(Page::CatalogHome(Catalog::Zing)),
+            Ok("nct") => app.go(Page::CatalogHome(Catalog::Nct)),
             Ok("downloads") => app.go(Page::Library(LibTab::Downloads)),
             Ok("settings") => app.go(Page::Settings),
             Ok("transfer") => app.go(Page::Transfer),
@@ -1183,6 +1221,12 @@ impl App {
     /// it is until the new data arrives. Unlike a visit, it also reloads a list kept from
     /// the last few minutes and the search already shown.
     fn refresh(&mut self) {
+        match self.page.clone() {
+            Page::CatalogHome(source) => self.load_catalog_home(source),
+            Page::CatalogSearch(source, query) => self.load_catalog_search(source, &query),
+            Page::MixedSearch(query) => self.load_mixed_search(&query, true),
+            _ => {}
+        }
         let liked_out = self.page == Page::Library(LibTab::Songs) && !self.logged_in;
         if let Some(id) = self.page_list().filter(|_| !liked_out).map(str::to_owned)
             && let Some(s) = self.lists.load(&id, matches!(self.page, Page::Album(_)), false)
@@ -1210,7 +1254,18 @@ impl App {
         self.page_changed = -1.0; // stamped with the frame time on the next pass
         // The search box holds the query of the search page you're on, and is empty elsewhere.
         self.search_text = match &self.page {
-            Page::Search(q) => q.clone(),
+            Page::Search(q) => {
+                self.search_provider = Some(mixed_playlist::Source::YouTube);
+                q.clone()
+            }
+            Page::MixedSearch(q) => {
+                self.search_provider = None;
+                q.clone()
+            }
+            Page::CatalogSearch(source, q) => {
+                self.search_provider = Some(mixed_playlist::Source::for_catalog(*source));
+                q.clone()
+            }
             _ => String::new(),
         };
         self.suggestions = Default::default();
@@ -1232,6 +1287,24 @@ impl App {
             Page::Explore => Some(Req::Explore(self.preferred_artist_ids())),
             Page::Mood(p) if self.mood.as_ref().is_none_or(|m| &m.params != p) => Some(Req::Mood(p.clone())),
             Page::Search(q) if self.search.as_ref().is_none_or(|s| &s.query != q) => Some(Req::Search(q.clone())),
+            Page::MixedSearch(query) => {
+                self.load_mixed_search(query, false);
+                None
+            }
+            Page::CatalogHome(source) => {
+                let state = self.catalog_state_mut(*source);
+                if state.home.is_none() && !state.home_failed {
+                    self.load_catalog_home(*source);
+                }
+                None
+            }
+            Page::CatalogSearch(source, query) => {
+                let state = self.catalog_state_mut(*source);
+                if &state.searched != query {
+                    self.load_catalog_search(*source, query);
+                }
+                None
+            }
             Page::Album(id) | Page::Playlist(id) => {
                 self.visit_list(id, matches!(self.page, Page::Album(_)));
                 None
@@ -1488,6 +1561,7 @@ impl eframe::App for App {
         }
         self.request_lyric_extras();
         // Upload: files from the picker, or dropped onto the window.
+        self.collect_mixed_file();
         let mut files = self.picked_uploads.lock().unwrap().take().unwrap_or_default();
         files.extend(ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_owned()).filter(|p| !p.as_os_str().is_empty()).collect::<Vec<_>>()));
         if !files.is_empty() {
@@ -1822,6 +1896,12 @@ impl eframe::App for App {
                     .frame(egui::Frame::new().fill(theme::panel(0.42)).inner_margin(egui::Margin::symmetric(14, 16)))
                     .show_separator_line(false)
                     .show(ui, |ui| shell::queue_drawer(self, ui));
+            } else if !self.queue_open && !self.np_open && catalog::docked_queue(&ctx) && matches!(self.page, Page::CatalogHome(_) | Page::CatalogSearch(..)) {
+                egui::Panel::right("catalog-up-next").resizable(false)
+                    .exact_size(310.0)
+                    .frame(egui::Frame::new().fill(theme::panel(0.44)).inner_margin(egui::Margin::symmetric(16, 16)))
+                    .show_separator_line(false)
+                    .show(ui, |ui| catalog::queue_panel(self, ui));
             }
             let sheet = app_style.sheet.map_or((Color32::TRANSPARENT, 0), |[a, r]| (theme::glass(a), r as u8));
             egui::CentralPanel::default()
@@ -2177,6 +2257,8 @@ struct AccountCache {
 /// What's saved between launches so the player picks up where it left off.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Session {
+    #[serde(default)]
+    mixed: bool,
     queue: Vec<Track>,
     index: usize,
     position_ms: u64,
