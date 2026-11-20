@@ -592,8 +592,30 @@ fn steady_url(ctx: &egui::Context, base: &str, px: u32) -> String {
 
 /// Paint a cover image (square-cropped, CDN-resized) with a placeholder underneath.
 pub fn paint_cover(ui: &Ui, rect: Rect, thumbs: &[Thumb], radius: f32, zoom: f32) {
-    let px = (rect.width() * ui.ctx().pixels_per_point()) as u32;
+    let mut px = (rect.width() * ui.ctx().pixels_per_point()) as u32;
+    // Feather Lite asks for the picture at the size its rows show (see `set_cover_px_cap`),
+    // however large the window: a 40-point cover is fetched and kept at 80 px.
+    if let Some(cap) = ui.data(|d| d.get_temp::<u32>(cover_px_cap_id())) {
+        px = px.min(cap);
+    }
     paint_cover_px(ui, rect, thumbs, radius, zoom, px);
+}
+
+fn cover_px_cap_id() -> egui::Id {
+    egui::Id::unique("cover-px-cap")
+}
+
+/// The largest size covers are fetched at from here on (this frame), or `None` for the
+/// drawn size. Only the light layout sets it.
+pub fn set_cover_px_cap(ui: &Ui, cap: Option<u32>) {
+    ui.data_mut(|d| {
+        match cap {
+            Some(c) => {
+                d.insert_temp(cover_px_cap_id(), c);
+            }
+            None => d.remove::<u32>(cover_px_cap_id()),
+        }
+    });
 }
 
 /// [`paint_cover`] fetching the image at `px` rather than the drawn size. A cover that
@@ -650,6 +672,10 @@ pub fn paint_cover_corners(ui: &Ui, rect: Rect, thumbs: &[Thumb], corners: Corne
 
 /// Paint the cover cropped to fill `rect` (any aspect), tinted, for full-bleed backdrops.
 pub fn paint_cover_fill(ui: &Ui, rect: Rect, thumbs: &[Thumb], tint: Color32) {
+    paint_cover_fill_rounded(ui, rect, thumbs, 0.0, tint);
+}
+
+pub(super) fn paint_cover_fill_rounded(ui: &Ui, rect: Rect, thumbs: &[Thumb], radius: f32, tint: Color32) {
     let ppp = ui.ctx().pixels_per_point();
     let px = fetch_px((rect.width().max(rect.height()) * ppp) as u32).clamp(200, 1200);
     let Some(t) = pick_thumb(thumbs, px) else { return };
@@ -658,7 +684,7 @@ pub fn paint_cover_fill(ui: &Ui, rect: Rect, thumbs: &[Thumb], tint: Color32) {
     let aspect = rect.width() / rect.height().max(1.0);
     let size = if aspect >= 1.0 { vec2(uv.width(), uv.height() / aspect) } else { vec2(uv.width() * aspect, uv.height()) };
     let url = steady_url(ui.ctx(), &t.url, px);
-    paint_remote(ui, &url, rect, 0.0, Rect::from_center_size(uv.center(), size), tint);
+    paint_remote(ui, &url, rect, radius, Rect::from_center_size(uv.center(), size), tint);
 }
 
 /// Start loading a cover at `px` without drawing it, so it's ready when it appears.

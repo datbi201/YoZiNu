@@ -366,7 +366,7 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
         ui.painter().circle_filled(r.center(), 16.0, theme::RED);
         ui.painter().circle_stroke(r.center(), 9.5, egui::Stroke::new(1.6, Color32::WHITE));
         widgets::play_triangle(ui, r.center() + vec2(0.8, 0.0), 4.6, Color32::WHITE);
-        let resp = named(resp, crate::i18n::label("Home", "Trang chủ"));
+        let resp = named(resp, "YouTube");
         let resp = if collapsed { resp } else { resp.on_hover_cursor(egui::CursorIcon::PointingHand) };
         if resp.clicked() && !collapsed {
             app.actions.push(Action::Go(Page::Home));
@@ -391,7 +391,7 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), nav_h), Sense::click());
         let mut resp = named(resp, label).on_hover_cursor(egui::CursorIcon::PointingHand);
         // Clicking the page you're on reloads it; say so where that loads anything.
-        if page == p && (matches!(page, Page::Home | Page::Explore) || (logged_in && matches!(page, Page::Library(_)))) {
+        if page == p && (page == Page::Home || (logged_in && matches!(page, Page::Library(_)))) {
             resp = resp.on_hover_text("Refresh (F5)");
         } else if collapsed && !item.rail_labels {
             resp = resp.on_hover_text(label);
@@ -430,8 +430,7 @@ pub fn sidebar(app: &mut App, ui: &mut Ui) {
             *go_to = Some(page);
         }
     };
-    nav(ui, icon::HOUSE, crate::i18n::label("YouTube Home", "Trang chủ YouTube"), Page::Home, p == Page::Home, &mut go_to);
-    nav(ui, icon::COMPASS, crate::i18n::label("YouTube Explore", "Khám phá YouTube"), Page::Explore, matches!(p, Page::Explore | Page::Mood(_)), &mut go_to);
+    nav(ui, icon::HOUSE, "YouTube", Page::Home, p == Page::Home, &mut go_to);
     nav(ui, icon::LIST_MUSIC, super::mixed_playlist::title(), Page::MixedPlaylist, matches!(p, Page::MixedPlaylist | Page::MixedSearch(_)), &mut go_to);
     for source in [crate::catalog::Catalog::Zing, crate::catalog::Catalog::Nct] {
         let selected = matches!(p, Page::CatalogHome(active) | Page::CatalogSearch(active, _) if active == source);
@@ -704,13 +703,20 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
 
         // Room for the account button, and the window buttons when they're over this row;
         // in a narrow window the box gives way rather than run under them.
-        let reserve = 50.0 + super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 20.0);
-        let scope_width = if ui.available_width() >= 360.0 { 132.0 } else { 105.0 };
-        let narrowest = 64.0;
+        let right_gap = super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 20.0);
+        let reserve = 50.0 + right_gap + if app.loading { 32.0 } else { 0.0 };
+        let available = (ui.available_width() - reserve).max(0.0);
+        let show_source_name = available >= 282.0;
+        let scope_width = if show_source_name { 152.0 } else { 44.0 };
+        let control_gap = 12.0;
         let sl = &app.look().app.search_look;
-        let width = (ui.available_width() - reserve - scope_width - 14.0).clamp(narrowest, sl.max_px.max(narrowest));
-        // Anywhere on the pill focuses the box, not just on the text area inside it.
-        let (rect, field) = ui.allocate_exact_size(vec2(width, sl.height.max(30.0)), Sense::click());
+        let width = (available - scope_width - control_gap).clamp(0.0, sl.max_px.max(64.0));
+        // Reserve both controls together. The edit's inset child must not advance
+        // the horizontal cursor or pull the next control back into the search box.
+        let (controls, _) = ui.allocate_exact_size(vec2(width + control_gap + scope_width, sl.height.max(30.0)), Sense::hover());
+        let rect = controls.with_max_x(controls.left() + width);
+        let source_rect = controls.with_min_x(rect.right() + control_gap);
+        let field = ui.interact(rect, ui.scope_id().with("global-search-field"), Sense::click());
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("search-box-right"), rect.right()));
         let box_look = &app.look().app;
         // At most a pill, whatever the box's height.
@@ -759,9 +765,12 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
             }
         }
         let search_icon = if sl.accent_icon { app.accent_color() } else { theme::text_dim() };
-        icon_at(ui, pos2(rect.left() + 22.0, rect.center().y), icon::SEARCH, 17.0, search_icon);
-        let clearable = !app.search_text.is_empty();
-        let inner = Rect::from_min_max(pos2(rect.left() + 42.0, rect.top() + 4.0), pos2(rect.right() - if clearable { 46.0 } else { 16.0 }, rect.bottom() - 4.0));
+        let compact = width < 120.0;
+        icon_at(ui, pos2(rect.left() + if compact { 16.0 } else { 22.0 }, rect.center().y), icon::SEARCH, 17.0, search_icon);
+        let clearable = !compact && !app.search_text.is_empty();
+        let text_left = rect.left() + if compact { 30.0 } else { 42.0 };
+        let text_right = rect.right() - if clearable { 46.0 } else if compact { 8.0 } else { 16.0 };
+        let inner = Rect::from_min_max(pos2(text_left, rect.top() + 4.0), pos2(text_right.max(text_left + 1.0), rect.bottom() - 4.0));
         // Up and Down walk the suggestions (past either end back to what was typed). Taken
         // before the box sees them, where they'd move the caret. Only bare arrows (Shift
         // selects text), and only suggestions for what's typed now, not ones still being replaced.
@@ -785,8 +794,12 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
                 }
             });
         }
-        let edit = ui.put(
-            inner,
+        let mut edit_ui = ui.new_child(
+            egui::UiBuilder::new().id_salt("global-search-edit").max_rect(inner)
+                .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)),
+        );
+        edit_ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        let edit = edit_ui.add(
             egui::TextEdit::singleline(&mut app.search_text)
                 .hint_text(egui::RichText::new(crate::i18n::label("Search songs, albums, artists", "Tìm bài hát, album, nghệ sĩ")).color(theme::text_faint()))
                 .font(theme::regular(15.0))
@@ -838,18 +851,9 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
             }
         }
 
-        let all = crate::i18n::label("All sources", "Tất cả");
-        egui::ComboBox::from_id_salt("global-search-source")
-            .width(scope_width)
-            .selected_text(app.search_provider.map_or(all, super::mixed_playlist::Source::name))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut app.search_provider, None, all);
-                for source in super::mixed_playlist::Source::ALL {
-                    ui.selectable_value(&mut app.search_provider, Some(source), source.name());
-                }
-            });
+        search_source_button(app, ui, source_rect, box_r, show_source_name);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(super::titlebar::right_gap(ui.ctx(), ui.max_rect(), 20.0));
+            ui.add_space(right_gap);
             let (r, resp) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::click());
             let resp = named(resp, crate::i18n::label("Account", "Tài khoản")).on_hover_cursor(egui::CursorIcon::PointingHand);
             let initial = app.account_name.as_deref().and_then(|n| n.chars().next()).unwrap_or('?');
@@ -873,6 +877,43 @@ pub fn top_bar(app: &mut App, ui: &mut Ui) {
                 widgets::loader(ui);
             }
         });
+    });
+}
+
+fn search_source_button(app: &mut App, ui: &mut Ui, rect: Rect, radius: f32, show_name: bool) {
+    use super::mixed_playlist::Source;
+
+    let all = crate::i18n::label("All sources", "Tất cả");
+    let label = app.search_provider.map_or(all, Source::name);
+    let tooltip = format!("{} · {label}", crate::i18n::label("Search source", "Nguồn tìm kiếm"));
+    let response = named(ui.interact(rect, ui.scope_id().with("global-search-source"), Sense::click()), &tooltip)
+        .on_hover_text(&tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hover = theme::anim_bool(ui.ctx(), response.id.with("hover"), response.hovered(), 0.15);
+    widgets::fill_rounded(ui, rect, radius, theme::glass(0.065 + 0.06 * hover));
+    ui.painter().rect_stroke(rect, radius, egui::Stroke::new(1.0, theme::glass(0.10)), egui::StrokeKind::Inside);
+    widgets::focus_ring(ui, &response, rect, radius);
+
+    let center = rect.center();
+    if show_name {
+        let title = widgets::galley(ui, label, theme::semibold(14.0), theme::text(), rect.width() - 48.0);
+        let title_pos = pos2(rect.left() + 15.0, center.y - title.size().y / 2.0);
+        ui.painter().galley(title_pos, title, theme::text());
+        icon_at(ui, pos2(rect.right() - 18.0, center.y), icon::CHEVRON_DOWN, 15.0, theme::text_dim());
+    } else {
+        icon_at(ui, center, icon::LIST_MUSIC, 18.0, theme::text());
+    }
+
+    widgets::menu_popup(&response).show(|ui| {
+        widgets::menu_body(ui, 164.0);
+        if widgets::menu_choice(ui, all, app.search_provider.is_none()) {
+            app.search_provider = None;
+        }
+        for source in Source::ALL {
+            if widgets::menu_choice(ui, source.name(), app.search_provider == Some(source)) {
+                app.search_provider = Some(source);
+            }
+        }
     });
 }
 
@@ -1308,9 +1349,10 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
     let time_w = time_g.as_ref().map_or(0.0, |g| g.size().x);
     // Where the song starts: at the left, or just right of the left-hand transport, the
     // middle of what's left then being about the bar's.
-    let art_side = chrome.thumb_px.unwrap_or(full.height() - 26.0).clamp(28.0, 64.0);
-    let show_dislike = app.rating_settings.player_button;
-    let song_tail = if show_dislike { 116.0 } else { 80.0 };
+    let compact_song = app.layout_choice != super::layouts::Choice::Original && row.width() < 875.0;
+    let art_side = chrome.thumb_px.unwrap_or(full.height() - 26.0).clamp(28.0, if compact_song { 38.0 } else { 64.0 });
+    let show_dislike = app.rating_settings.player_button && !compact_song;
+    let song_tail = if compact_song { 42.0 } else if show_dislike { 116.0 } else { 80.0 };
     // How wide the longer of the title and byline really is, buttons excluded.
     let song_text = track.as_ref().map_or(0.0, |t| {
         let width = |s: String, font: egui::FontId| ui.painter().layout_no_wrap(s, font, Color32::PLACEHOLDER).size().x;
@@ -1322,7 +1364,7 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         let min = if show_dislike { 290.0 } else { 300.0 };
         (row.center().x - block / 2.0 + art_side / 2.0).max(row.left() + min)
     } else {
-        row.left() + 30.0
+        row.left() + if compact_song { 21.0 } else { 30.0 }
     };
     // A record peeking out of the thumbnail takes room before the title.
     let song_x = art_x + art_side / 2.0 + 14.0 + chrome.disc_secs.map_or(0.0, |_| art_side * 0.46);
@@ -1477,7 +1519,7 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         let lr = Rect::from_center_size(lpos, Vec2::splat(36.0));
         let dpos = lpos + vec2(36.0, 0.0);
         let dr = Rect::from_center_size(dpos, Vec2::splat(34.0));
-        let menu_x = if show_dislike { dpos.x } else { lpos.x };
+        let menu_x = if compact_song { text_end - 12.0 } else if show_dislike { dpos.x } else { lpos.x };
         let kr = Rect::from_center_size(pos2(menu_x + 34.0, cy), Vec2::splat(30.0));
         if let (Some(slot), Some([a, r])) = (block_slot, chrome.track_block) {
             let block = Rect::from_min_max(art.min - Vec2::splat(4.0), pos2(kr.right() + 4.0, art.bottom() + 4.0));
@@ -1486,28 +1528,31 @@ pub fn player_bar(app: &mut App, ui: &mut Ui, now: f64) {
         for r in &menu_on {
             widgets::context_popup(r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| widgets::song_menu(ui, t, liked, None, &mut app.actions));
         }
-        let lresp = ui.interact(lr, ui.scope_id().with(("like", &t.id, app.generation)), Sense::click());
-        let lresp = named(lresp, if liked { "Remove like" } else { "Like" }).on_hover_cursor(egui::CursorIcon::PointingHand);
-        let gesture = super::ratings::like_gesture(ui, &lresp, (), liked, None);
-        let lh = theme::anim_bool(ui.ctx(), lresp.id.with("h"), lresp.hovered(), 0.15);
-        let pop = theme::anim_bool(ui.ctx(), ("liked", &t.id), liked, 0.3);
-        ui.painter().circle_filled(lpos, 18.0, theme::glass(0.1 * lh));
         let rating_size = 19.0;
-        let size = rating_size * (1.0 + (chrome.like_hover_scale - 1.0) * lh) * (1.0 + 0.25 * (pop * std::f32::consts::PI).sin());
-        // Hidden at rest in some themes, there as soon as the pointer's on the song, and a liked song always shows it.
-        let show_like = !chrome.like_on_hover || liked || on_song || lresp.has_focus();
-        let like_a = theme::anim_bool(ui.ctx(), lresp.id.with("show"), show_like, 0.15);
-        let idle = theme::lerp_color(theme::text_dim(), theme::text(), lh);
-        let outline = theme::with_alpha(theme::lerp_color(idle, theme::RED, pop), like_a);
-        if like_a > 0.0 {
-            super::ratings::unlike_heart(ui, lpos, size, pop, outline, theme::with_alpha(theme::RED, like_a), gesture.progress);
-        }
-        if gesture.hint {
-            super::ratings::unlike_hint(ui, &lresp);
-        }
-        if gesture.activate && let Some(action) = app.heard_like_action(!liked) {
-            app.actions.push(action);
-        }
+        let show_like = if !compact_song {
+            let lresp = ui.interact(lr, ui.scope_id().with(("like", &t.id, app.generation)), Sense::click());
+            let lresp = named(lresp, if liked { "Remove like" } else { "Like" }).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let gesture = super::ratings::like_gesture(ui, &lresp, (), liked, None);
+            let lh = theme::anim_bool(ui.ctx(), lresp.id.with("h"), lresp.hovered(), 0.15);
+            let pop = theme::anim_bool(ui.ctx(), ("liked", &t.id), liked, 0.3);
+            ui.painter().circle_filled(lpos, 18.0, theme::glass(0.1 * lh));
+            let size = rating_size * (1.0 + (chrome.like_hover_scale - 1.0) * lh) * (1.0 + 0.25 * (pop * std::f32::consts::PI).sin());
+            // Hidden at rest in some themes, there as soon as the pointer's on the song, and a liked song always shows it.
+            let show_like = !chrome.like_on_hover || liked || on_song || lresp.has_focus();
+            let like_a = theme::anim_bool(ui.ctx(), lresp.id.with("show"), show_like, 0.15);
+            let idle = theme::lerp_color(theme::text_dim(), theme::text(), lh);
+            let outline = theme::with_alpha(theme::lerp_color(idle, theme::RED, pop), like_a);
+            if like_a > 0.0 {
+                super::ratings::unlike_heart(ui, lpos, size, pop, outline, theme::with_alpha(theme::RED, like_a), gesture.progress);
+            }
+            if gesture.hint {
+                super::ratings::unlike_hint(ui, &lresp);
+            }
+            if gesture.activate && let Some(action) = app.heard_like_action(!liked) {
+                app.actions.push(action);
+            }
+            show_like
+        } else { false };
         if show_dislike {
             super::ratings::player_button(app, ui, dr, t, rating_size, show_like);
         }

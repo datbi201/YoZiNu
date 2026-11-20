@@ -1,0 +1,48 @@
+{
+  "id": "layout-covers",
+  "name": "Cover Gallery",
+  "creators": [
+    "YoZiNu"
+  ],
+  "blurb": "Larger artwork, with the next songs at the side.",
+  "source": "YoZiNu layout",
+  "accent": "#0e5849",
+  "background": {
+    "mode": "solid",
+    "solid": "#16271e",
+    "solid_light": "#f8f4e9",
+    "scrim": 0.05
+  },
+  "lyrics": {
+    "rem": 12,
+    "line_height": 1.28
+  },
+  "chrome": {
+    "bar_height": 74,
+    "bar_color": "#16271e",
+    "play_button": "accent",
+    "progress_color": "accent",
+    "progress_px": 2
+  },
+  "app": {
+    "card_radius": 8,
+    "thumb_radius": 6,
+    "panel_radius": 8,
+    "search_radius": 9,
+    "search_border": 0.17,
+    "search_alpha": 0.07,
+    "accent_controls": true,
+    "text_dim": "#afc8bd",
+    "np_solid": "#16271e",
+    "heading_px": 22,
+    "bar_border": true,
+    "bar_alpha": 1,
+    "controls": {
+      "accent_primary": true
+    },
+    "search_look": {
+      "height": 39,
+      "max_px": 840
+    }
+  }
+}

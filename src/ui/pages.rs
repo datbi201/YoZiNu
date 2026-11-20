@@ -659,8 +659,10 @@ fn mood(app: &mut App, ui: &mut Ui, params: &str, now: f64) {
 }
 
 pub(super) fn page_title(ui: &mut Ui, title: &str) {
-    ui.add_space(14.0);
-    ui.label(RichText::new(title).font(theme::bold(34.0)).color(theme::text()));
+    // A short window keeps its room for the page itself.
+    let short = ui.ctx().content_rect().height() < 560.0;
+    ui.add_space(if short { 8.0 } else { 14.0 });
+    ui.label(RichText::new(title).font(theme::bold(if short { 24.0 } else { 34.0 })).color(theme::text()));
 }
 
 // ------------------------------------------------------------------ search
@@ -2157,6 +2159,40 @@ fn settings_lyrics(app: &mut App, ui: &mut Ui) {
 
 /// Settings › Appearance and Theme.
 fn settings_appearance(app: &mut App, ui: &mut Ui) {
+    use super::layouts::Choice;
+    let layout = crate::i18n::label("Layout", "Bố cục");
+    settings_section(ui, layout, None, None, |ui| {
+        let mut pick = None;
+        let desc = crate::i18n::label("Change how YoZiNu is arranged while keeping the music playing.", "Đổi cách sắp xếp YoZiNu ngay cả khi đang nghe nhạc.");
+        setting_row(ui, layout, Some(desc), |ui| {
+            let button = dropdown_button(ui, app.layout_choice.name(), 208.0, layout);
+            widgets::menu_popup(&button).show(|ui| {
+                widgets::menu_body(ui, 208.0);
+                for choice in Choice::ALL {
+                    if option_row(ui, choice.name(), choice == app.layout_choice).clicked() {
+                        pick = Some(choice);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        if let Some(choice) = pick {
+            app.choose_layout(choice, ui.ctx());
+        }
+    });
+    if app.layout_choice != Choice::Original {
+        settings_section(ui, tr!("settings-appearance"), None, None, |ui| {
+            setting_row(ui, tr!("settings-font"), Some(tr!("settings-font-desc")), |ui| {
+                if let Some(name) = font_picker(ui) {
+                    theme::set_font_choice(&name);
+                    app.chrome_applied = Some(String::new());
+                }
+            });
+            divider(ui);
+            settings_zoom(ui);
+        });
+        return;
+    }
     let was_theme = app.theme_id.clone();
     settings_section(ui, tr!("settings-appearance"), None, None, |ui| {
         let desc = if cfg!(windows) {
@@ -2280,7 +2316,7 @@ fn settings_appearance(app: &mut App, ui: &mut Ui) {
     // Not a card of rows, so it's narrowed here: to the themes that match.
     let shown: Vec<&crate::preset::Preset> = FILTER.with_borrow_mut(|f| {
         f.section = tr!("settings-themes").to_owned();
-        crate::preset::all().iter().filter(|p| f.words.is_empty() || words_match(&f.words, &f.section, &format!("{} {} {}", p.name, p.creators.join(" "), p.blurb))).collect()
+        crate::preset::all().iter().filter(|p| !p.id.starts_with("layout-") && (f.words.is_empty() || words_match(&f.words, &f.section, &format!("{} {} {}", p.name, p.creators.join(" "), p.blurb)))).collect()
     });
     if !shown.is_empty() {
         FILTER.with_borrow_mut(|f| f.total += shown.len());

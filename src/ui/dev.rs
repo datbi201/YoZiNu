@@ -7,6 +7,35 @@ use std::time::Duration;
 use super::App;
 
 impl App {
+    /// Dev hook: `YTM_LAYOUT_AT=<secs>:<layout id>;…` switches layout at those times, the
+    /// way Settings does, so a test can check that a switch keeps the song and the queue.
+    pub(super) fn dev_layout_switches(&mut self, ctx: &egui::Context, now: f64) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let Some(script) = dev_var("YTM_LAYOUT_AT") else { return };
+        static STEPS: std::sync::OnceLock<Vec<(f64, &'static str)>> = std::sync::OnceLock::new();
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let steps = STEPS.get_or_init(|| {
+            let mut steps: Vec<(f64, &'static str)> = script
+                .split(';')
+                .filter_map(|step| {
+                    let (at, id) = step.split_once(':')?;
+                    Some((at.trim().parse::<f64>().ok()?, id.trim()))
+                })
+                .collect();
+            steps.sort_by(|a, b| a.0.total_cmp(&b.0));
+            steps
+        });
+        ctx.request_repaint_after(Duration::from_millis(250));
+        let mut next = NEXT.load(Ordering::Relaxed);
+        while let Some((_, id)) = steps.get(next).filter(|(at, _)| *at <= now) {
+            next += 1;
+            let choice = super::layouts::Choice::from_id(Some(id));
+            log::info!("layout switch: {}", choice.id());
+            self.choose_layout(choice, ctx);
+        }
+        NEXT.store(next, Ordering::Relaxed);
+    }
+
     /// Dev hook: `YTM_SKIP=<secs>` skips to the next song once a song has played that
     /// long, and logs how many it has skipped: memory over many song changes (#107).
     pub(super) fn dev_skip(&mut self, ctx: &egui::Context, now: f64) {
@@ -168,10 +197,18 @@ pub(super) fn dev_script(ctx: &egui::Context, raw: &mut egui::RawInput) {
                 ("u", Some(p)) => steps.extend([(at, Step::Move(p)), (at, Step::Press(p, false))]),
                 ("r", Some(p)) => steps.push((at, Step::Resize(p))),
                 ("t", _) => steps.push((at, Step::Text(value))),
-                ("k", _) if egui::Key::from_name(&value.to_uppercase()).is_some() || value == "esc" => {
-                    let key = if value == "esc" { egui::Key::Escape } else { egui::Key::from_name(&value.to_uppercase()).unwrap_or(egui::Key::Escape) };
-                    steps.push((at, Step::Key(key)));
-                }
+                ("k", _) => match value.to_ascii_lowercase().as_str() {
+                    "esc" => steps.push((at, Step::Key(egui::Key::Escape))),
+                    "enter" => steps.push((at, Step::Key(egui::Key::Enter))),
+                    "tab" => steps.push((at, Step::Key(egui::Key::Tab))),
+                    _ => {
+                        if let Some(key) = egui::Key::from_name(value).or_else(|| egui::Key::from_name(&value.to_uppercase())) {
+                            steps.push((at, Step::Key(key)));
+                        } else {
+                            log::warn!("YTM_SCRIPT: can't read {step}");
+                        }
+                    }
+                },
                 ("w", _) if value.parse::<f32>().is_ok() => steps.push((at, Step::Wheel(value.parse().unwrap_or(0.0)))),
                 ("f", _) if value.parse::<f32>().is_ok() => {
                     // 6 moves 20 ms apart, then the fingers lift (Wayland's axis stop).

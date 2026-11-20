@@ -18,6 +18,11 @@ const FALLBACK_VERSION: &str = "1.20261006.10.00";
 const REFRESH: Duration = Duration::from_secs(24 * 3600);
 /// Accepts YouTube's cookie consent, so anonymous requests get content, not a consent page.
 const CONSENT: &str = "SOCS=CAISAiAD";
+/// Market for YouTube Music requests: the listener is in Vietnam, so Home and charts
+/// follow Vietnam rather than the web client's US default.
+pub(crate) const MARKET: &str = "VN";
+/// Keep replies labelled in English: YTM's parsers match English section and chip names.
+const LANGUAGE: &str = "en";
 
 /// Client version and visitor ID read from music.youtube.com, cached on disk.
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -402,24 +407,7 @@ impl Api {
         }
         anyhow::ensure!(!self.unavailable.load(Relaxed), Unavailable);
         let mut payload = body.clone();
-        payload["context"] = json!({
-            "client": {
-                "clientName": "WEB_REMIX",
-                "clientVersion": web.version,
-                "platform": "DESKTOP",
-                "originalUrl": ORIGIN,
-                "visitorData": web.visitor_data,
-                "hl": "en",
-                "gl": "US",
-                "timeZone": self.tz.0,
-                "utcOffsetMinutes": self.tz.1,
-            },
-            "request": {"useSsl": true},
-            "user": {"lockedSafetyMode": false},
-        });
-        if self.restricted.load(Relaxed) {
-            payload["context"]["user"]["enableSafetyMode"] = true.into();
-        }
+        payload["context"] = request_context(&web.version, &web.visitor_data, &self.tz, self.restricted.load(Relaxed));
         let mut req = crate::proxy::http()
             .post(format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
             .header("User-Agent", webmusic::UA)
@@ -551,6 +539,29 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+fn request_context(version: &str, visitor_data: &str, tz: &(String, i32), restricted: bool) -> Value {
+    let (zone, offset) = (&tz.0, tz.1);
+    let mut context = json!({
+        "client": {
+            "clientName": "WEB_REMIX",
+            "clientVersion": version,
+            "platform": "DESKTOP",
+            "originalUrl": ORIGIN,
+            "visitorData": visitor_data,
+            "hl": LANGUAGE,
+            "gl": MARKET,
+            "timeZone": zone,
+            "utcOffsetMinutes": offset,
+        },
+        "request": {"useSsl": true},
+        "user": {"lockedSafetyMode": false},
+    });
+    if restricted {
+        context["user"]["enableSafetyMode"] = true.into();
+    }
+    context
+}
+
 fn is_retryable(e: &anyhow::Error) -> bool {
     match e.downcast_ref::<ApiError>() {
         Some(a) => a.status == 400 || a.status == 403 || a.status == 429 || a.status >= 500,
@@ -651,6 +662,18 @@ fn utc_offset_minutes() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requests_ask_for_the_vietnam_market() {
+        let tz = ("Asia/Ho_Chi_Minh".to_owned(), 420);
+        let context = request_context("1.2", "visitor", &tz, false);
+        assert_eq!(context["client"]["gl"], "VN");
+        // English labels keep YTM's English section and chip matches working.
+        assert_eq!(context["client"]["hl"], "en");
+        assert!(context["user"]["enableSafetyMode"].is_null());
+        let safe = request_context("1.2", "visitor", &tz, true);
+        assert_eq!(safe["user"]["enableSafetyMode"], true);
+    }
 
     #[test]
     fn session_refusals() {

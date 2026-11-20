@@ -15,7 +15,7 @@ mod backdrop;
 mod backend;
 #[macro_export]
 macro_rules! app_rev {
-    () => { "Rev0.4" };
+    () => { "Rev0.6.2" };
 }
 
 mod catalog;

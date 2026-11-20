@@ -4,6 +4,7 @@
 //! Reusing the backend's reqwest client avoids a second HTTP/TLS stack in the binary.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -192,6 +193,60 @@ impl BytesLoader for HttpImages {
 
 /// GPU memory the thumbnails may keep before the least recently drawn are dropped.
 const TEXTURE_BUDGET: usize = 64 * 1024 * 1024;
+/// Feather Lite's cover cache: this many cover textures at most, the least recently drawn
+/// let go as soon as one more arrives (see [`set_lite`]). A song's cover is a few hundred
+/// kilobytes at the sizes its rows ask for, so the whole cache stays small.
+const LITE_COVERS: usize = 48;
+/// Whether the light layout is drawing: covers are then kept by count (above) rather than
+/// by the byte budget, so browsing a long list can't grow the cache past it.
+static LITE: AtomicBool = AtomicBool::new(false);
+/// How many cover textures were let go since launch, and what the cache holds now.
+static EVICTED: AtomicU64 = AtomicU64::new(0);
+static HELD: AtomicU64 = AtomicU64::new(0);
+static HELD_BYTES: AtomicU64 = AtomicU64::new(0);
+/// How long Feather Lite keeps its small cover cache before dropping it by itself.
+const LITE_CLEAR_EVERY: Duration = Duration::from_secs(5 * 60);
+static LAST_LITE_CLEAR: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Turn the cover cache's count limit on (Feather Lite) or off (every other layout).
+pub fn set_lite(on: bool) {
+    if !on {
+        *LAST_LITE_CLEAR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    LITE.store(on, Ordering::Relaxed);
+}
+
+/// Called each frame while Feather Lite draws: its cache is dropped every five minutes,
+/// without a button. Leaving the layout restarts the interval.
+pub fn tick_lite(ctx: &egui::Context) {
+    if !LITE.load(Ordering::Relaxed) {
+        return;
+    }
+    let now = Instant::now();
+    let mut last = LAST_LITE_CLEAR.lock().unwrap_or_else(|e| e.into_inner());
+    if last.map_or(true, |at| now.duration_since(at) >= LITE_CLEAR_EVERY) {
+        clear_covers(ctx);
+        *last = Some(now);
+    }
+}
+
+/// Drop every picture the textures came from, and the textures themselves. Feather Lite
+/// does this on its five-minute timer; they come back from the disk cache when drawn again.
+pub fn clear_covers(ctx: &egui::Context) {
+    let loaders = ctx.loaders();
+    for l in loaders.texture.lock().iter() {
+        l.forget_all();
+    }
+    for l in loaders.image.lock().iter() {
+        l.forget_all();
+    }
+    for l in loaders.bytes.lock().iter() {
+        l.forget_all();
+    }
+    HELD.store(0, Ordering::Relaxed);
+    HELD_BYTES.store(0, Ordering::Relaxed);
+}
+
 /// A big picture (now playing's cover, a banner: 3.5 MB at 960 px) not drawn for this
 /// long is dropped even under the budget: one per song played would otherwise pile up
 /// until it. It comes back from the disk cache when it's next shown.
@@ -276,7 +331,24 @@ impl TextureLoader for Textures {
         let mut state = self.state.lock().unwrap();
         state.pass = pass_index;
         state.cache.retain(|_, t| t.handle.byte_size() < BIG || t.drawn.elapsed() < BIG_UNUSED);
+        // Feather Lite: covers are kept by count, not by bytes, so a long list browsed
+        // through can't leave a cache behind it. What's drawn this pass is the newest.
+        if LITE.load(Ordering::Relaxed) {
+            let mut covers: Vec<(u64, String)> =
+                state.cache.iter().filter(|(uri, _)| is_http(uri)).map(|(uri, t)| (t.last_used, uri.clone())).collect();
+            let over = covers.len().saturating_sub(LITE_COVERS);
+            if over > 0 {
+                covers.sort_unstable();
+                for (_, uri) in covers.into_iter().take(over) {
+                    if state.cache.remove(&uri).is_some() {
+                        EVICTED.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
         let mut total = state.cache.values().map(|t| t.handle.byte_size()).sum::<usize>();
+        HELD.store(state.cache.len() as u64, Ordering::Relaxed);
+        HELD_BYTES.store(total as u64, Ordering::Relaxed);
         if total <= TEXTURE_BUDGET {
             return;
         }

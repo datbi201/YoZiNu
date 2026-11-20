@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use crate::backend::{ArtistPage, Collection};
 use crate::model::{Card, Chip, Link, Shelf, ShelfKind, Target, Thumb, Track};
-use crate::ytmapi::Api;
+use crate::ytmapi::{Api, MARKET};
 
 pub struct HomePage {
     pub chips: Vec<Chip>,
@@ -57,13 +57,34 @@ fn parse_home(v: &Value) -> HomePage {
         })
         .filter(|c: &Chip| podcasts() || c.title != "Podcasts")
         .collect();
-    HomePage { chips, shelves: shelves(&sec["contents"]), continuation: continuation(sec) }
+    HomePage { chips, shelves: home_shelves(&sec["contents"]), continuation: continuation(sec) }
+}
+
+/// Two generic YouTube promos that repeat what the rest of Home already shows: the
+/// market's charts and its new releases. Match the title or its small line, since YouTube
+/// moves the wording between the two over time.
+const HOME_PROMOS: [(&str, &str); 2] = [
+    ("Top tunes right now", "Today's hits"),
+    ("Fresh tunes", "New & Now"),
+];
+
+pub(crate) fn keep_home_shelf(shelf: &Shelf) -> bool {
+    let title = shelf.title.trim();
+    let strap = shelf.strapline.as_deref().unwrap_or("").trim();
+    !HOME_PROMOS.iter().any(|(a, b)| {
+        title.eq_ignore_ascii_case(a) || title.eq_ignore_ascii_case(b)
+            || strap.eq_ignore_ascii_case(a) || strap.eq_ignore_ascii_case(b)
+    })
+}
+
+fn home_shelves(contents: &Value) -> Vec<Shelf> {
+    shelves(contents).into_iter().filter(keep_home_shelf).collect()
 }
 
 pub async fn home_more(api: &Api, token: &str, auth: bool) -> anyhow::Result<HomePage> {
     let v = api.call("browse", json!({ "continuation": token }), auth).await?;
     let sec = &v["continuationContents"]["sectionListContinuation"];
-    Ok(HomePage { chips: vec![], shelves: shelves(&sec["contents"]), continuation: continuation(sec) })
+    Ok(HomePage { chips: vec![], shelves: home_shelves(&sec["contents"]), continuation: continuation(sec) })
 }
 
 // --------------------------------------------------------------- moods & genres
@@ -1043,9 +1064,9 @@ pub struct Charts {
     pub artists: Vec<String>,
 }
 
-/// US charts.
+/// Charts for the listener's market (Vietnam).
 pub async fn charts(api: &Api) -> anyhow::Result<Charts> {
-    let body = json!({ "browseId": "FEmusic_charts", "params": "sgYPRkVtdXNpY19leHBsb3Jl", "formData": { "selectedValues": ["US"] } });
+    let body = json!({ "browseId": "FEmusic_charts", "params": "sgYPRkVtdXNpY19leHBsb3Jl", "formData": { "selectedValues": [MARKET] } });
     Ok(parse_charts(&api.call("browse", body, false).await?))
 }
 
@@ -2230,6 +2251,21 @@ fn upload_page(run: &Value) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_leaves_out_the_two_generic_promos() {
+        let shelf = |title: &str, strap: Option<&str>| Shelf {
+            title: title.into(),
+            strapline: strap.map(str::to_owned),
+            strap_thumb: None,
+            kind: ShelfKind::Cards(vec![]),
+        };
+        assert!(!keep_home_shelf(&shelf("Top tunes right now", Some("Today's hits"))));
+        assert!(!keep_home_shelf(&shelf("Fresh tunes", Some("New & Now"))));
+        assert!(!keep_home_shelf(&shelf("Today's hits", None)));
+        assert!(keep_home_shelf(&shelf("Trending 20 Vietnam", None)));
+        assert!(keep_home_shelf(&shelf("Quick picks", Some("Made for you"))));
+    }
 
     #[test]
     fn song_rating_comes_from_the_requested_player_button() {

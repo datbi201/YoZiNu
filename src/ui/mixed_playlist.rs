@@ -6,7 +6,7 @@ use egui::{Color32, Rect, RichText, Sense, Ui, pos2, vec2};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 use crate::{catalog::Catalog, model::Track, theme::{self, icon}};
-use super::{Action, App, Page, pages, widgets};
+use super::{Action, App, Page, fmt_time, layouts::Choice, pages, widgets};
 
 const FILE: &str = "mixed-playlist.json";
 pub(super) fn title() -> &'static str { crate::i18n::label("Mixed playlist", "Playlist tổng hợp") }
@@ -79,6 +79,13 @@ pub(super) struct State {
     file_reply: Arc<Mutex<Option<FileReply>>>,
 }
 
+impl State {
+    /// How many songs the playlist holds, for a layout's sidebar count.
+    pub(super) fn len(&self) -> usize {
+        self.tracks.len()
+    }
+}
+
 enum FileReply {
     Import(Vec<String>, usize),
     Export(io::Result<()>),
@@ -89,6 +96,7 @@ enum FileReply {
 pub enum Edit {
     Swap(usize, usize),
     Remove(usize),
+    Clear,
 }
 
 fn song_url(id: &str) -> Option<String> {
@@ -347,6 +355,10 @@ impl App {
                 tracks.remove(index);
                 Some("Đã bỏ bài khỏi playlist tổng hợp")
             }
+            Edit::Clear if !tracks.is_empty() => {
+                tracks.clear();
+                Some("Đã xóa tất cả bài khỏi playlist tổng hợp")
+            }
             _ => return,
         };
         if let Err(error) = save_tracks(self.backend.data_dir(), &tracks) {
@@ -398,8 +410,13 @@ pub(super) fn results(app: &mut App, ui: &mut Ui, query: &str) {
 
 pub(super) fn page(app: &mut App, ui: &mut Ui) {
     pages::page_title(ui, title());
+    // Studio Console reads the list as a multi-column table; Velvet Gallery as a cover grid.
+    let table = matches!(app.layout_choice, Choice::Playlist | Choice::Console) && ui.available_width() >= 665.0;
+    let grid = app.layout_choice == Choice::Velvet;
+    let short = ui.ctx().content_rect().height() < 560.0;
     let busy = app.mixed_playlist.file_work;
     let can_export = app.mixed_playlist.tracks.iter().any(|track| song_url(&track.id).is_some());
+    let has_tracks = !app.mixed_playlist.tracks.is_empty();
     ui.horizontal_wrapped(|ui| {
         let can_import = !busy && !app.mixed_playlist.read_failed;
         if ui.add_enabled(can_import, egui::Button::new(crate::i18n::label("Import links", "Nhập liên kết"))).clicked() {
@@ -408,12 +425,16 @@ pub(super) fn page(app: &mut App, ui: &mut Ui) {
         if ui.add_enabled(!busy && can_export, egui::Button::new(crate::i18n::label("Export links", "Xuất liên kết"))).clicked() {
             app.pick_mixed_file(ui.ctx(), true);
         }
+        if ui.add_enabled(!busy && has_tracks, egui::Button::new(crate::i18n::label("Clear all", "Xóa tất cả"))).clicked() {
+            app.actions.push(Action::EditMixed(Edit::Clear));
+        }
         if busy { ui.spinner(); }
     });
-    ui.add_space(12.0);
-    ui.add_space(18.0);
+    ui.add_space(if short { 4.0 } else { 12.0 });
+    ui.add_space(if short { 4.0 } else { 18.0 });
 
     let accent = app.accent_color();
+    let playing = app.playing();
     let state = &mut app.mixed_playlist;
     if state.read_failed {
         ui.label("Không đọc được dữ liệu playlist tổng hợp.");
@@ -460,16 +481,89 @@ pub(super) fn page(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(12.0);
 
-    let current = app.queue.current().map(|track| track.id.as_str()).filter(|_| app.queue.mixed);
+    let current = app.queue.current().map(|track| track.id.as_str()).filter(|_| table || grid || app.queue.mixed);
+
+    // Velvet Gallery shows the playlist as a wall of covers, four across.
+    if grid {
+        let width = ui.available_width();
+        let cols = if width >= 900.0 { 4 } else if width >= 640.0 { 3 } else { 2 };
+        let mut start = 0;
+        while start < visible.len() {
+            let count = cols.min(visible.len() - start);
+            ui.columns(cols, |columns| {
+                for (col, ui) in columns.iter_mut().enumerate().take(count) {
+                    let shown = start + col;
+                    let track = &state.tracks[visible[shown]];
+                    let cell = ui.available_width();
+                    // A cover that leaves room under it for the title, on one screenful.
+                    let side = cell.min(if short { 132.0 } else { 204.0 });
+                    ui.push_id(&track.id, |ui| {
+                        let active = current == Some(track.id.as_str());
+                        let mut clicked = false;
+                        ui.horizontal(|ui| {
+                            ui.add_space((cell - side) * 0.5);
+                            let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click());
+                            if ui.is_rect_visible(rect) {
+                                widgets::paint_cover(ui, rect, &track.thumbs, theme::card_radius(), 1.0);
+                                if active || resp.hovered() {
+                                    let at = rect.right_bottom() - vec2(18.0, 18.0);
+                                    ui.painter().circle_filled(at, 15.0, theme::shade(0.72));
+                                    widgets::play_pause_glyph(ui, at, 11.0, Color32::WHITE, active && playing);
+                                }
+                            }
+                            clicked = resp.clicked();
+                        });
+                        if clicked {
+                            play = Some(shown);
+                        }
+                        ui.add(egui::Label::new(RichText::new(&track.title).font(theme::semibold(13.0))).truncate());
+                        ui.add(egui::Label::new(RichText::new(track.artist_line()).font(theme::regular(11.5)).color(theme::text_dim())).truncate());
+                    });
+                }
+            });
+            start += count;
+            ui.add_space(16.0);
+        }
+        if let Some(start) = play {
+            let tracks = visible.iter().map(|&index| state.tracks[index].clone()).collect();
+            app.actions.push(Action::PlayMixed(tracks, start));
+        }
+        return;
+    }
+
+    let spacing = ui.spacing().item_spacing.x;
+    let controls_width = 3.0 * (33.0 + spacing);
+    let columns = table.then(|| {
+        let width = ui.available_width();
+        let artist = (width * 0.23).min(260.0);
+        let duration = 86.0;
+        let song = (width - artist - duration - 61.0 - controls_width - 4.0 * spacing).max(150.0);
+        [song, artist, duration]
+    });
+    if let Some([song, artist, duration]) = columns {
+        ui.horizontal(|ui| {
+            table_text(ui, crate::i18n::label("Song", "Bài hát"), song, true);
+            table_text(ui, crate::i18n::label("Artist", "Nghệ sĩ"), artist, true);
+            table_text(ui, crate::i18n::label("Source", "Nguồn"), 54.0, true);
+            table_text(ui, crate::i18n::label("Time", "Thời lượng"), duration, true);
+        });
+        ui.separator();
+    }
     for (shown, &index) in visible.iter().enumerate() {
         let track = &state.tracks[index];
         ui.push_id(&track.id, |ui| {
             ui.horizontal(|ui| {
-                Source::for_track(track).badge(ui);
-                let controls_width = 3.0 * (33.0 + ui.spacing().item_spacing.x);
-                let width = (ui.available_width() - controls_width).max(40.0);
-                if song_row(ui, track, index, width, current == Some(track.id.as_str()), accent) {
+                if !table {
+                    Source::for_track(track).badge(ui);
+                }
+                let width = columns.map_or_else(|| (ui.available_width() - controls_width).max(40.0), |c| c[0]);
+                if song_row(ui, track, index, width, current == Some(track.id.as_str()), accent, table) {
                     play = Some(shown);
+                }
+                if let Some([_, artist, duration]) = columns {
+                    table_text(ui, &track.artist_line(), artist, false);
+                    ui.allocate_ui(vec2(54.0, 22.0), |ui| Source::for_track(track).badge(ui));
+                    table_text(ui, &track.duration.map(fmt_time).unwrap_or_default(), duration, false);
                 }
                 for (target, glyph, label) in [
                     (shown.checked_sub(1).and_then(|i| visible.get(i)), icon::CHEVRON_UP, crate::i18n::label("Move up", "Chuyển lên")),
@@ -494,14 +588,21 @@ pub(super) fn page(app: &mut App, ui: &mut Ui) {
     }
 }
 
-fn song_row(ui: &mut Ui, track: &Track, index: usize, width: f32, current: bool, accent: Color32) -> bool {
+fn table_text(ui: &mut Ui, value: &str, width: f32, heading: bool) {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, if heading { 26.0 } else { 40.0 }), Sense::hover());
+    let font = if heading { theme::semibold(13.0) } else { theme::regular(13.0) };
+    widgets::text_at(ui, pos2(rect.left() + 4.0, rect.center().y - 8.0), value, font, theme::text_dim(), width - 8.0);
+}
+
+fn song_row(ui: &mut Ui, track: &Track, index: usize, width: f32, current: bool, accent: Color32, table: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
     if !ui.is_rect_visible(rect) {
         return false;
     }
     let response = widgets::named(response, &track.title).on_hover_cursor(egui::CursorIcon::PointingHand);
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 8.0, theme::glass(0.09));
+    if response.hovered() || (current && table) {
+        let fill = if current && table { theme::with_alpha(accent, 0.13) } else { theme::glass(0.09) };
+        ui.painter().rect_filled(rect, 6.0, fill);
     }
     widgets::focus_ring(ui, &response, rect, 8.0);
     let cover = Rect::from_min_size(rect.min + vec2(3.0, 3.0), vec2(34.0, 34.0));
@@ -510,9 +611,12 @@ fn song_row(ui: &mut Ui, track: &Track, index: usize, width: f32, current: bool,
     let text_width = (rect.right() - x - 4.0).max(0.0);
     let title = format!("{}. {}", index + 1, track.title);
     let ink = if current { accent } else { theme::text() };
-    widgets::text_at(ui, pos2(x, rect.top() + 2.0), &title, theme::semibold(14.0), ink, text_width);
+    let y = if table { 10.0 } else { 2.0 };
+    widgets::text_at(ui, pos2(x, rect.top() + y), &title, theme::semibold(14.0), ink, text_width);
     let artists = track.artist_line();
-    widgets::text_at(ui, pos2(x, rect.top() + 21.0), &artists, theme::regular(12.0), theme::text_dim(), text_width);
+    if !table {
+        widgets::text_at(ui, pos2(x, rect.top() + 21.0), &artists, theme::regular(12.0), theme::text_dim(), text_width);
+    }
     response.on_hover_text(format!("{} · {artists}", track.title)).clicked()
 }
 

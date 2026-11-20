@@ -1,0 +1,63 @@
+{
+  "id": "layout-feather",
+  "name": "Feather Lite",
+  "creators": [
+    "YoZiNu"
+  ],
+  "blurb": "A flat, ultra-light layout: 48-point rows, 36-point covers and a small, self-trimming cover cache.",
+  "source": "YoZiNu layout",
+  "accent": "#8a94a6",
+  "background": {
+    "mode": "solid",
+    "solid": "#0e1013",
+    "solid_light": "#ffffff",
+    "scrim": 0.0
+  },
+  "lyrics": {
+    "rem": 11,
+    "line_height": 1.24
+  },
+  "chrome": {
+    "bar_height": 54,
+    "bar_color": "#101216",
+    "play_button": "accent",
+    "progress_color": "accent",
+    "progress_px": 2,
+    "bar_border_alpha": 0.12
+  },
+  "app": {
+    "card_radius": 6,
+    "thumb_radius": 4,
+    "panel_radius": 6,
+    "search_radius": 6,
+    "search_border": 0.18,
+    "search_alpha": 0.05,
+    "accent_controls": true,
+    "text_dim": "#9ca3af",
+    "np_solid": "#0e1013",
+    "heading_px": 18,
+    "bar_border": true,
+    "bar_alpha": 1,
+    "controls": {
+      "accent_primary": true,
+      "ghost_outline": 0.0,
+      "press_rows": 1.0
+    },
+    "row_look": {
+      "height": 48,
+      "thumb_px": 36,
+      "radius": 4,
+      "hover": 0.05,
+      "current": 0.07,
+      "separator": 0.05,
+      "pad": 6,
+      "hover_menu": true,
+      "image_zoom": 0.0,
+      "image_dim": 0.0
+    },
+    "search_look": {
+      "height": 30,
+      "max_px": 520
+    }
+  }
+}

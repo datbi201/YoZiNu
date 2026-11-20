@@ -1751,7 +1751,7 @@ pub(super) fn video_frame(app: &mut App, ctx: &egui::Context, track: &crate::mod
 
 // ------------------------------------------------------------------ lyrics
 
-fn lyrics_panel(app: &mut App, ui: &mut Ui, rect: Rect, now: f64, centered: bool) {
+pub(super) fn lyrics_panel(app: &mut App, ui: &mut Ui, rect: Rect, now: f64, centered: bool) {
     // Lent out for the frame rather than cloned (the drawing needs `app` mutably).
     let Some((id, set)) = app.lyrics.take() else {
         ui.add_space(rect.height() * 0.35);
@@ -1835,7 +1835,7 @@ fn synced(app: &mut App, ui: &mut Ui, rect: Rect, id: &str, lyrics: &Lyrics, now
         let mut h = std::collections::hash_map::DefaultHasher::new();
         id.hash(&mut h);
         lyrics.provider.key().hash(&mut h);
-        app.theme_id.hash(&mut h);
+        app.look().id.hash(&mut h);
                 for r in &roman {
             match r {
                 Some(karaoke::Roman::Timed(_, s)) | Some(karaoke::Roman::Text(s)) => s.hash(&mut h),

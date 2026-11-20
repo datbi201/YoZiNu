@@ -1,0 +1,49 @@
+{
+  "id": "layout-aurora",
+  "name": "Aurora Stage",
+  "creators": [
+    "YoZiNu"
+  ],
+  "blurb": "Ambient light that follows the cover, a grouped sidebar, today's pick and a right panel for the queue or the lyrics.",
+  "source": "YoZiNu layout",
+  "accent": "#38bdf8",
+  "background": {
+    "mode": "solid",
+    "solid": "#0c0e14",
+    "solid_light": "#f4f6fb",
+    "scrim": 0.05
+  },
+  "lyrics": {
+    "rem": 12,
+    "line_height": 1.3
+  },
+  "chrome": {
+    "bar_height": 72,
+    "bar_color": "#0e1118",
+    "play_button": "accent",
+    "progress_color": "accent",
+    "progress_px": 2,
+    "bar_border_alpha": 0.08
+  },
+  "app": {
+    "card_radius": 14,
+    "thumb_radius": 10,
+    "panel_radius": 12,
+    "search_radius": 10,
+    "search_border": 0.14,
+    "search_alpha": 0.06,
+    "accent_controls": true,
+    "text_dim": "#94a3b8",
+    "np_solid": "#0c0e14",
+    "heading_px": 24,
+    "bar_border": true,
+    "bar_alpha": 1,
+    "controls": {
+      "accent_primary": true
+    },
+    "search_look": {
+      "height": 38,
+      "max_px": 760
+    }
+  }
+}

@@ -2195,7 +2195,7 @@ mod tests {
     /// Every theme has a cover for its card in Settings.
     #[test]
     fn themes_have_covers() {
-        for p in all().iter().filter(|p| p.source != "ytm-rs") {
+        for p in all().iter().filter(|p| p.source != "ytm-rs" && !p.id.starts_with("layout-")) {
             assert!(cover(&p.id).is_some(), "{} has no cover", p.id);
         }
     }

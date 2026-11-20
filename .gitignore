@@ -11,3 +11,6 @@ server/node_modules/
 .playwright-cli/
 target-bisect/
 result
+
+# OneDrive folder icons: not part of the source.
+desktop.ini

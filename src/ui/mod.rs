@@ -15,6 +15,7 @@ mod hotkeys;
 mod integrations;
 mod jam;
 mod karaoke;
+mod layouts;
 mod lists;
 mod lyric_prefs;
 mod mini;
@@ -130,9 +131,8 @@ pub use mini::{init_pill, set_hwnd as set_mini_hwnd};
 
 /// Settings › General › Window › Open on: the pages the app can start on, as saved and
 /// as listed.
-pub(super) const START_PAGES: [(&str, &str, Page); 10] = [
-    ("home", "Home", Page::Home),
-    ("explore", "Explore", Page::Explore),
+pub(super) const START_PAGES: [(&str, &str, Page); 9] = [
+    ("home", "YouTube", Page::Home),
     ("library", "Library › Playlists", Page::Library(LibTab::Playlists)),
     ("liked", "Library › Liked songs", Page::Library(LibTab::Songs)),
     ("albums", "Library › Albums", Page::Library(LibTab::Albums)),
@@ -585,6 +585,16 @@ pub struct App {
     accent: Color32,
     /// Selected theme (see `preset.rs`).
     theme_id: String,
+    layout_choice: layouts::Choice,
+    /// Rev0.6: Aurora Stage's right panel (the queue or the lyrics), and which of the two.
+    aurora_right: bool,
+    aurora_tab: u8,
+    /// Rev0.6: Velvet Gallery's sliding listening room, and its tab.
+    velvet_room: bool,
+    velvet_tab: u8,
+    /// Rev0.6: Feather Lite's drawer (0 none, 1 queue, 2 lyrics). Its cover cache is
+    /// cleared by a timer in `images`, not by a visible control.
+    feather_drawer: u8,
     /// Preset whose chrome (glass, corner radius) is installed in the egui style.
     chrome_applied: Option<String>,
     /// Light or dark pages (the ytm-rs theme's; see `light_pages`).
@@ -1006,6 +1016,12 @@ impl App {
             // Dev hook: YTM_THEME=<preset id> tries a theme without saving it.
             // The old "Classic theme" switch is the Classic theme now.
             theme_id: std::env::var("YTM_THEME").ok().or_else(|| get("default_theme").filter(|v| v == "1").map(|_| "classic".to_owned())).or_else(|| get("theme")).unwrap_or_else(|| crate::preset::DEFAULT_ID.to_owned()),
+            layout_choice: layouts::Choice::from_id(dev_var("YTM_LAYOUT").map(str::to_owned).or_else(|| get("layout_choice")).as_deref()),
+            aurora_right: true,
+            aurora_tab: 0,
+            velvet_room: false,
+            velvet_tab: 0,
+            feather_drawer: 0,
             chrome_applied: None,
             // Dev hook: YTM_APPEARANCE=light|dark|system tries a mode without saving it.
             appearance: theme::Appearance::from_key(&dev_var("YTM_APPEARANCE").map(str::to_owned).or_else(|| get("appearance")).unwrap_or_default()),
@@ -1111,7 +1127,6 @@ impl App {
         }
         match std::env::var("YTM_PAGE").as_deref() {
             Ok("home") => app.go(Page::Home),
-            Ok("explore") => app.go(Page::Explore),
             Ok("library") => app.go(Page::Library(LibTab::Playlists)),
             Ok("artists") => app.go(Page::Library(LibTab::Artists)),
             Ok("uploads") => app.go(Page::Library(LibTab::Uploads)),
@@ -1165,6 +1180,7 @@ impl App {
         if let Some(c) = std::fs::read(app.backend.data_dir().join(HOME_CACHE))
             .ok()
             .and_then(|b| serde_json::from_slice::<HomeCache>(&b).ok())
+            .map(|mut c| { c.shelves.retain(crate::ytm::keep_home_shelf); c })
             .filter(|c| c.logged_in == app.logged_in && !c.shelves.is_empty())
         {
             app.home = Some(HomeState { chips: c.chips, shelves: c.shelves, continuation: None, loading_more: None, picks_loading: false, picks_expanded: false });
@@ -1395,6 +1411,9 @@ impl App {
 
     /// The accent before `accent_color` deepens it for light pages.
     fn base_accent(&self) -> Color32 {
+        if self.layout_choice != layouts::Choice::Original {
+            return self.look().accent(self.accent);
+        }
         match self.accent_source {
             AccentSource::Custom(c) => c,
             AccentSource::System => theme::system_accent().unwrap_or_else(|| self.look().accent(self.accent)),
@@ -1411,6 +1430,9 @@ impl App {
 
     /// Whether pages draw light: Settings › Appearance › Mode, in any theme.
     fn light_pages(&self, ctx: &egui::Context) -> bool {
+        if let Some(light) = self.layout_choice.light() {
+            return light;
+        }
         // A theme file's background says which it is.
         if let Some(light) = theme::file_light() {
             return light;
@@ -1424,8 +1446,9 @@ impl App {
     }
 
     fn sync_look(&self) {
-        if crate::preset::active().id != self.theme_id {
-            crate::preset::set_active(&self.theme_id);
+        let id = self.layout_choice.preset().unwrap_or(&self.theme_id);
+        if crate::preset::active().id != id {
+            crate::preset::set_active(id);
         }
     }
 
@@ -1707,10 +1730,11 @@ impl eframe::App for App {
         self.sync_look();
         let look = self.look();
         // A spring's overshoot isn't for this: it would say "covered" before it is.
-        let np = theme::anim_bool_timed(&ctx, "np-open", self.np_open && self.current().is_some(), look.app.np_open_secs).min(1.0);
+        let room = self.layout_choice == layouts::Choice::Listening && !self.fullscreen;
+        let np = theme::anim_bool_timed(&ctx, "np-open", !room && self.np_open && self.current().is_some(), look.app.np_open_secs).min(1.0);
         // The pages keep their mode while now playing slides over them. Now playing is dark;
         // once it's most of the way up, so are the player bar and what opens over it.
-        theme::set_file_theme(&ctx, self.file_theme());
+        theme::set_file_theme(&ctx, if self.layout_choice == layouts::Choice::Original { self.file_theme() } else { theme::FileTheme::default() });
         let light = self.light_pages(&ctx) && !self.fullscreen;
         let bar_light = light && np < 0.5;
         theme::set_mode(&ctx, light);
@@ -1747,6 +1771,7 @@ impl eframe::App for App {
         // Mid-switch to or from the mini player, the frame stays as it is.
         titlebar::sync(&ctx, (layout != mini::Layout::Blank).then_some(layout == mini::Layout::Full));
         dev::dev_memory(&ctx, now);
+        self.dev_layout_switches(&ctx, now);
         dev::dev_probe(&ctx);
         if layout == mini::Layout::Mini && mini::video_active() {
             mini::video_pip(self, ui, now);
@@ -1778,6 +1803,8 @@ impl eframe::App for App {
         if np >= 1.0 {
             // Not drawn, but now playing's own backdrop runs on the same clock.
             shell::background_clock(self, now);
+        } else if self.layout_choice != layouts::Choice::Original {
+            ui.painter().rect_filled(screen, 0.0, look.solid());
         } else {
             shell::background(self, ui, screen, now);
         }
@@ -1794,7 +1821,11 @@ impl eframe::App for App {
             ctx.set_sublayer(nowplaying::layer(), bar);
             bar
         });
-        if !self.fullscreen {
+        let alternate = self.layout_choice != layouts::Choice::Original && !self.fullscreen && np <= 0.001;
+        self.queue_float = None;
+        if alternate {
+            layouts::draw(self, ui, now, room && self.np_open);
+        } else if !self.fullscreen {
             let pages = theme::set_mode(&ctx, bar_light);
             let floating = look.chrome.player_bar == crate::preset::PlayerBar::Floating;
             let bar_alpha = app_style.bar_alpha.clamp(0.0, 1.0);
@@ -1839,8 +1870,7 @@ impl eframe::App for App {
                 });
             theme::set_mode(&ctx, pages);
         }
-        self.queue_float = None;
-        if !self.fullscreen && !covered {
+        if !alternate && !self.fullscreen && !covered {
             use crate::preset::SidebarStyle;
             let side_alpha = app_style.sidebar_alpha.clamp(0.0, 1.0);
             // Clear over the top of a page, filling in as it scrolls.
@@ -2125,6 +2155,9 @@ impl eframe::App for App {
         if std::env::var_os("YTM_THEME").is_none() {
             storage.set_string("theme", self.theme_id.clone());
         }
+        if dev_var("YTM_LAYOUT").is_none() {
+            storage.set_string("layout_choice", self.layout_choice.id().to_owned());
+        }
         if dev_var("YTM_FONT").is_none() {
             storage.set_string("font", theme::font_choice());
         }
@@ -2231,6 +2264,7 @@ impl HomeCache {
                 return;
             }
             *written = n;
+            let cache = cache.map(|mut c| { c.shelves.retain(crate::ytm::keep_home_shelf); c });
             match cache.and_then(|c| serde_json::to_vec(&c).ok()) {
                 Some(json) => {
                     let tmp = path.with_extension("json.tmp");

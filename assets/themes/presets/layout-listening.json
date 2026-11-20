@@ -1,0 +1,48 @@
+{
+  "id": "layout-listening",
+  "name": "Listening Room",
+  "creators": [
+    "YoZiNu"
+  ],
+  "blurb": "A focused listening view with live lyrics and Up next.",
+  "source": "YoZiNu layout",
+  "accent": "#fa8d86",
+  "background": {
+    "mode": "solid",
+    "solid": "#241117",
+    "solid_light": "#fbf0ec",
+    "scrim": 0.05
+  },
+  "lyrics": {
+    "rem": 12,
+    "line_height": 1.28
+  },
+  "chrome": {
+    "bar_height": 76,
+    "bar_color": "#241117",
+    "play_button": "accent",
+    "progress_color": "accent",
+    "progress_px": 2
+  },
+  "app": {
+    "card_radius": 12,
+    "thumb_radius": 6,
+    "panel_radius": 10,
+    "search_radius": 10,
+    "search_border": 0.17,
+    "search_alpha": 0.07,
+    "accent_controls": true,
+    "text_dim": "#d8b5bf",
+    "np_solid": "#241117",
+    "heading_px": 22,
+    "bar_border": true,
+    "bar_alpha": 1,
+    "controls": {
+      "accent_primary": true
+    },
+    "search_look": {
+      "height": 39,
+      "max_px": 840
+    }
+  }
+}

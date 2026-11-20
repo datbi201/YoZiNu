@@ -154,7 +154,6 @@ fn entries(app: &App) -> Vec<Entry> {
         if start_page(&page, app.logged_in, app.show_podcasts) == page {
             let glyph = match page {
                 Page::Home => icon::HOUSE,
-                Page::Explore => icon::COMPASS,
                 Page::Library(LibTab::Downloads) => icon::DOWNLOAD,
                 _ => icon::LIBRARY,
             };

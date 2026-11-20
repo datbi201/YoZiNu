@@ -1,9 +1,12 @@
-# YoZiNu · Rev0.4
+# YoZiNu · Rev0.6.2
 
 YoZiNu là ứng dụng nghe nhạc trên Windows, phát triển từ [ytm-rs](https://github.com/grapedjuice/ytm-rs) theo giấy phép GPL-3.0. Ứng dụng tích hợp YouTube Music, Zing MP3 và NhacCuaTui.
 
-- Tìm từ thanh trên cùng, chọn một nguồn hoặc tìm cả ba. Dùng **Playlist tổng hợp** để lưu và xếp thứ tự bài từ nhiều nguồn.
+- Tìm từ thanh trên cùng, chọn một nguồn hoặc tìm cả ba. Dùng **Playlist tổng hợp** để lưu và xếp thứ tự bài từ nhiều nguồn; nút **Xóa tất cả** dọn toàn bộ playlist đã lưu.
 - **Xuất liên kết** tạo tệp văn bản UTF-8, mỗi dòng một liên kết trang bài hát. **Nhập liên kết** đọc TXT/M3U, nối các bài hợp lệ vào playlist đang lưu và giữ thứ tự.
+- **Cài đặt → Giao diện → Bố cục** có 11 lựa chọn: **Giao diện gốc** (kèm toàn bộ theme và bảng màu), sáu bố cục của Rev0.5 và bốn bố cục của Rev0.6 — **Aurora Stage**, **Studio Console**, **Velvet Gallery**, **Feather Lite**. Cả bốn chạy được ở chế độ Sáng và Tối.
+- **Feather Lite** có hàng điều hướng riêng với **YouTube**, Zing MP3, NhacCuaTui, **Playlist tổng hợp** và **Cài đặt**, bên cạnh các nút Sắp phát và Lời. Đây là bố cục tối giản, tối ưu RAM: dòng 48 điểm, ảnh bìa 36 điểm, ảnh được tải đúng cỡ hiển thị (tối đa 80 điểm ảnh), chỉ tải cho phần đang nhìn thấy, và bộ đệm ảnh bìa giữ tối đa 48 ảnh gần nhất. Bộ đệm này tự dọn sau mỗi 5 phút dùng bố cục; không còn nút RAM hay **Dọn bộ đệm ngay**.
+- Mục **Explore** đã được bỏ khỏi mọi bố cục; nút **YouTube** mở trang Home của YouTube. Trang Home này không còn các khối “Top tunes right now / Today's hits” và “Fresh tunes / New & Now”. YouTube Home và bảng xếp hạng dùng thị trường **Việt Nam (`VN`)**; nhãn phản hồi vẫn để tiếng Anh để bộ phân tích dữ liệu nhận đúng tên mục.
 - Chọn **Settings → General → Language → Tiếng Việt**, rồi mở lại ứng dụng.
 - NhacCuaTui và Zing MP3 dùng chế độ khách trong YoZiNu. Mục Tài khoản có liên kết đến trang chính thức của từng dịch vụ.
 

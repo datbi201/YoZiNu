@@ -127,7 +127,7 @@ pub fn surface_fill() -> Color32 {
     filed(F_SURFACE).unwrap_or(if light() { Color32::from_rgb(252, 251, 253) } else { Color32::from_rgb(28, 24, 32) })
 }
 
-fn luma(c: Color32) -> f32 {
+pub(crate) fn luma(c: Color32) -> f32 {
     0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32
 }
 
