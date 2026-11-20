@@ -10,6 +10,23 @@ YoZiNu là ứng dụng nghe nhạc trên Windows, phát triển từ [ytm-rs](h
 - Chọn **Settings → General → Language → Tiếng Việt**, rồi mở lại ứng dụng.
 - NhacCuaTui và Zing MP3 dùng chế độ khách trong YoZiNu. Mục Tài khoản có liên kết đến trang chính thức của từng dịch vụ.
 
+### Ảnh chụp YoZiNu (YoZiNu screenshots)
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-zing-mp3.webp" alt="Zing MP3: new releases, with the Up next strip above the player controls."><br><sub>Zing MP3: bài mới phát hành, thanh Up next và nút Open queue ngay trên bộ điều khiển phát.<br><i>Zing MP3: new releases, with the Up next strip above the player controls.</i></sub></td>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-nhaccuatui.webp" alt="NhacCuaTui: Top 50 charts, with the Up next panel open on the right."><br><sub>NhacCuaTui: Top 50, ngăn Up next mở bên phải.<br><i>NhacCuaTui: Top 50 charts, with the Up next panel open on the right.</i></sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-studio-console.webp" alt="Studio Console layout: YouTube home, synced lyrics and the queue side by side."><br><sub>Bố cục Studio Console: trang YouTube, lời đồng bộ và hàng đợi cạnh nhau.<br><i>Studio Console layout: YouTube home, synced lyrics and the queue side by side.</i></sub></td>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-now-playing.webp" alt="Full-screen Now playing with the queue on the right and the Autoplay similar songs option."><br><sub>Đang phát toàn màn hình, hàng đợi bên phải và tùy chọn Autoplay similar songs.<br><i>Full-screen Now playing with the queue on the right and the Autoplay similar songs option.</i></sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-lyrics.webp" alt="Full-screen lyrics that follow the song line by line."><br><sub>Lời bài hát chạy theo từng dòng, toàn màn hình.<br><i>Full-screen lyrics that follow the song line by line.</i></sub></td>
+    <td width="50%" valign="top"><img src="docs/screenshots/yozinu-settings-layout.webp" alt="Settings, Appearance, Layout: the list of 11 layouts (Feather Lite selected)."><br><sub>Cài đặt, Giao diện, Bố cục: danh sách 11 bố cục (đang chọn Feather Lite).<br><i>Settings, Appearance, Layout: the list of 11 layouts (Feather Lite selected).</i></sub></td>
+  </tr>
+</table>
+
 ### Biên dịch YoZiNu
 
 Chạy `cargo build --release --locked` bằng Rust trên Windows. Để bật adapter Zing MP3, bản build cần cấu hình được cấp cho tích hợp qua hai biến môi trường `YOZINU_ZING_API_KEY` và `YOZINU_ZING_SECRET_KEY`. Đặt giá trị ở môi trường máy build. YoZiNu báo lỗi cấu hình Zing nếu thiếu, các nguồn còn lại vẫn hoạt động.
